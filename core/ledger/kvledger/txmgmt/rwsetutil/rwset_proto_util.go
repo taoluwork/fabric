@@ -18,10 +18,10 @@ package rwsetutil
 
 import (
 	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
+	"github.com/hyperledger/fabric-protos-go/ledger/rwset"
+	"github.com/hyperledger/fabric-protos-go/ledger/rwset/kvrwset"
+	"github.com/hyperledger/fabric/core/ledger/internal/version"
 	"github.com/hyperledger/fabric/core/ledger/util"
-	"github.com/hyperledger/fabric/protos/ledger/rwset"
-	"github.com/hyperledger/fabric/protos/ledger/rwset/kvrwset"
 )
 
 /////////////////////////////////////////////////////////////////
@@ -45,6 +45,32 @@ type CollHashedRwSet struct {
 	CollectionName string
 	HashedRwSet    *kvrwset.HashedRWSet
 	PvtRwSetHash   []byte
+}
+
+// GetPvtDataHash returns the PvtRwSetHash for a given namespace and collection
+func (txRwSet *TxRwSet) GetPvtDataHash(ns, coll string) []byte {
+	// we could build and use a map to reduce the number of lookup
+	// in the future call. However, we decided to defer such optimization
+	// due to the following assumptions (mainly to avoid additional LOC).
+	// we assume that the number of namespaces and collections in a txRWSet
+	// to be very minimal (in a single digit),
+	for _, nsRwSet := range txRwSet.NsRwSets {
+		if nsRwSet.NameSpace != ns {
+			continue
+		}
+		return nsRwSet.getPvtDataHash(coll)
+	}
+	return nil
+}
+
+func (nsRwSet *NsRwSet) getPvtDataHash(coll string) []byte {
+	for _, collHashedRwSet := range nsRwSet.CollHashedRwSets {
+		if collHashedRwSet.CollectionName != coll {
+			continue
+		}
+		return collHashedRwSet.PvtRwSetHash
+	}
+	return nil
 }
 
 /////////////////////////////////////////////////////////////////
@@ -136,6 +162,7 @@ func (txRwSet *TxRwSet) toProtoMsg() (*rwset.TxReadWriteSet, error) {
 	return protoMsg, nil
 }
 
+// TxRwSetFromProtoMsg transforms the proto message into a struct for ease of use
 func TxRwSetFromProtoMsg(protoMsg *rwset.TxReadWriteSet) (*TxRwSet, error) {
 	txRwSet := &TxRwSet{}
 	var nsRwSet *NsRwSet
@@ -206,6 +233,20 @@ func collHashedRwSetFromProtoMsg(protoMsg *rwset.CollectionHashedReadWriteSet) (
 	return colHashedRwSet, nil
 }
 
+// NumCollections returns the number of collections present in the TxRwSet
+func (txRwSet *TxRwSet) NumCollections() int {
+	if txRwSet == nil {
+		return 0
+	}
+	numColls := 0
+	for _, nsRwset := range txRwSet.NsRwSets {
+		for range nsRwset.CollHashedRwSets {
+			numColls++
+		}
+	}
+	return numColls
+}
+
 ///////////////////////////////////////////////////////////////////////////////
 // functions for private read-write set
 ///////////////////////////////////////////////////////////////////////////////
@@ -223,6 +264,7 @@ func (txPvtRwSet *TxPvtRwSet) toProtoMsg() (*rwset.TxPvtReadWriteSet, error) {
 	return protoMsg, nil
 }
 
+// TxPvtRwSetFromProtoMsg transforms the proto message into a struct for ease of use
 func TxPvtRwSetFromProtoMsg(protoMsg *rwset.TxPvtReadWriteSet) (*TxPvtRwSet, error) {
 	txPvtRwset := &TxPvtRwSet{}
 	var nsPvtRwSet *NsPvtRwSet

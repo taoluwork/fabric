@@ -12,14 +12,15 @@ import (
 	"time"
 
 	"github.com/Shopify/sarama"
-	"github.com/hyperledger/fabric/common/flogging/floggingtest"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/fabric/common/flogging"
+	"github.com/onsi/gomega/gbytes"
+	"github.com/stretchr/testify/require"
 )
 
 func TestLoggerInit(t *testing.T) {
-	assert.IsType(t, &saramaLoggerImpl{}, sarama.Logger, "Sarama logger (sarama.Logger) is not properly initialized.")
-	assert.NotNil(t, saramaLogger, "Event logger (saramaLogger) is not properly initialized, it's Nil.")
-	assert.Equal(t, sarama.Logger, saramaLogger, "Sarama logger (sarama.Logger) and Event logger (saramaLogger) should be the same.")
+	require.IsType(t, &saramaLoggerImpl{}, sarama.Logger, "Sarama logger (sarama.Logger) is not properly initialized.")
+	require.NotNil(t, saramaLogger, "Event logger (saramaLogger) is not properly initialized, it's Nil.")
+	require.Equal(t, sarama.Logger, saramaLogger, "Sarama logger (sarama.Logger) and Event logger (saramaLogger) should be the same.")
 }
 
 func TestEventLogger(t *testing.T) {
@@ -40,7 +41,7 @@ func TestEventLogger(t *testing.T) {
 	select {
 	// expect event from first listener
 	case receivedEvent := <-eventChan:
-		assert.Equal(t, eventMessage, receivedEvent, "")
+		require.Equal(t, eventMessage, receivedEvent, "")
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected event on eventChan")
 	}
@@ -48,7 +49,7 @@ func TestEventLogger(t *testing.T) {
 	// expect event from sesond listener
 	select {
 	case receivedEvent := <-eventChan2:
-		assert.Equal(t, eventMessage, receivedEvent, "")
+		require.Equal(t, eventMessage, receivedEvent, "")
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected event on eventChan2")
 	}
@@ -69,7 +70,7 @@ func TestEventLogger(t *testing.T) {
 	// expect event from sesond listener
 	select {
 	case receivedEvent := <-eventChan2:
-		assert.Equal(t, eventMessage, receivedEvent, "")
+		require.Equal(t, eventMessage, receivedEvent, "")
 	case <-time.After(100 * time.Millisecond):
 		t.Fatal("expected event on eventChan2")
 	}
@@ -137,11 +138,9 @@ func TestLogPossibleKafkaVersionMismatch(t *testing.T) {
 	topic := channelNameForTest(t)
 	partition := int32(0)
 
-	oldLogger := logger
-	defer func() { logger = oldLogger }()
-
-	l, recorder := floggingtest.NewTestLogger(t)
-	logger = l
+	buf := gbytes.NewBuffer()
+	old := flogging.SetWriter(buf)
+	defer flogging.SetWriter(old)
 
 	broker := sarama.NewMockBroker(t, 500)
 	defer broker.Close()
@@ -180,7 +179,7 @@ func TestLogPossibleKafkaVersionMismatch(t *testing.T) {
 	case <-partitionConsumer.Messages():
 		t.Fatalf("did not expect to receive message")
 	case <-time.After(shortTimeout):
-		entries := recorder.MessagesContaining("Kafka.Version specified in the orderer configuration is incorrectly set")
-		assert.NotEmpty(t, entries)
+		t.Logf("buffer:\n%s", buf.Contents())
+		require.Contains(t, string(buf.Contents()), "Kafka.Version specified in the orderer configuration is incorrectly set")
 	}
 }

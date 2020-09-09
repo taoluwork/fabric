@@ -1,5 +1,5 @@
-Install Samples, Binaries and Docker Images
-===========================================
+Install Samples, Binaries, and Docker Images
+============================================
 
 While we work on developing real installers for the Hyperledger Fabric
 binaries, we provide a script that will download and install samples and
@@ -13,9 +13,8 @@ Hyperledger Fabric.
           Please visit the :doc:`prereqs` if you haven't previously installed
           it.
 
-          If you are using Docker Toolbox on Windows 7 or macOS, you
-          will need to use a location under ``C:\Users`` (Windows 7) or
-          ``/Users`` (macOS) when installing and running the samples.
+          If you are using Docker Toolbox or macOS, you
+          will need to use a location under ``/Users`` (macOS) when installing and running the samples.
 
           If you are using Docker for Mac, you will need to use a location
           under ``/Users``, ``/Volumes``, ``/private``, or ``/tmp``.  To use a different
@@ -30,26 +29,30 @@ Determine a location on your machine where you want to place the `fabric-samples
 repository and enter that directory in a terminal window. The
 command that follows will perform the following steps:
 
-#. If needed, clone the `hyperledger/fabric-samples` repository
+#. If needed, clone the `hyperledger/fabric-samples <https://github.com/hyperledger/fabric-samples>`_ repository
 #. Checkout the appropriate version tag
 #. Install the Hyperledger Fabric platform-specific binaries and config files
-   for the version specified into the root of the fabric-samples repository
+   for the version specified into the /bin and /config directories of fabric-samples
 #. Download the Hyperledger Fabric docker images for the version specified
 
 Once you are ready, and in the directory into which you will install the
-Fabric Samples and binaries, go ahead and execute the following command:
+Fabric Samples and binaries, go ahead and execute the command to pull down
+the binaries and images.
+
+.. note:: If you want the latest production release, omit all version identifiers.
 
 .. code:: bash
 
-  curl -sSL http://bit.ly/2ysbOFE | bash -s 1.2.0
+  curl -sSL https://bit.ly/2ysbOFE | bash -s
 
-.. note:: If you want to download Fabric, Fabric-ca and thirdparty Docker images
-          you must pass the version identifier to the script.
+.. note:: If you want a specific release, pass a version identifier for Fabric and Fabric-CA docker images.
+          The command below demonstrates how to download the latest production releases -
+          **Fabric v2.2.0** and **Fabric CA v1.4.8**
 
 .. code:: bash
 
-  curl -sSL http://bit.ly/2ysbOFE | bash -s <fabric> <fabric-ca> <thirdparty>
-  curl -sSL http://bit.ly/2ysbOFE | bash -s 1.2.0 1.2.0 0.4.10
+  curl -sSL https://bit.ly/2ysbOFE | bash -s -- <fabric_version> <fabric-ca_version>
+  curl -sSL https://bit.ly/2ysbOFE | bash -s -- 2.2.0 1.4.8
 
 .. note:: If you get an error running the above curl command, you may
           have too old a version of curl that does not handle
@@ -59,24 +62,22 @@ Fabric Samples and binaries, go ahead and execute the following command:
 	  information on where to find the latest version of curl and
 	  get the right environment. Alternately, you can substitute
 	  the un-shortened URL:
-	  https://github.com/hyperledger/fabric/blob/master/scripts/bootstrap.sh
-
-.. note:: You can use the command above for any published version of Hyperledger
-          Fabric. Simply replace `1.2.0` with the version identifier
-          of the version you wish to install.
+	  https://raw.githubusercontent.com/hyperledger/fabric/{BRANCH}/scripts/bootstrap.sh
 
 The command above downloads and executes a bash script
 that will download and extract all of the platform-specific binaries you
 will need to set up your network and place them into the cloned repo you
 created above. It retrieves the following platform-specific binaries:
 
-  * ``cryptogen``,
   * ``configtxgen``,
   * ``configtxlator``,
-  * ``peer``,
+  * ``cryptogen``,
+  * ``discover``,
+  * ``idemixgen``
   * ``orderer``,
-  * ``idemixgen``, and
-  * ``fabric-ca-client``
+  * ``peer``,
+  * ``fabric-ca-client``,
+  * ``fabric-ca-server``
 
 and places them in the ``bin`` sub-directory of the current working
 directory.

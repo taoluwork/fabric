@@ -15,8 +15,6 @@ checks before applying the state changes that come with the transaction itself:
 There are use cases which demand custom transaction validation rules different
 from the default Fabric validation rules, such as:
 
-- **State-based endorsement:** When the endorsement policy depends on the key,
-  and not only on the namespace.
 - **UTXO (Unspent Transaction Output):** When the validation takes into account
   whether the transaction doesn't double spend its inputs.
 - **Anonymous transactions:** When the endorsement doesn't contain the identity
@@ -27,17 +25,21 @@ Pluggable endorsement and validation logic
 ------------------------------------------
 
 Fabric allows for the implementation and deployment of custom endorsement and
-validation logic into the peer to be associated with chaincode handling in a
-pluggable manner. This logic can be either compiled into the peer as built in
-selectable logic, or compiled and deployed alongside the peer as a
-`Golang plugin <https://golang.org/pkg/plugin/>`_.
+validation logic into the peer to be associated with chaincode handling. This
+logic can be compiled into the peer or built with the peer and deployed
+alongside it as a `Go plugin <https://golang.org/pkg/plugin/>`_.
 
-Recall that every chaincode is associated with its own endorsement and validation
-logic at the time of chaincode instantiation. If the user doesn't select one, the
-default built-in logic is selected implicitly. A peer administrator may alter the
-endorsement/validation logic that is selected by extending the peer's local
-configuration with the customization of the endorsement/validation logic which is
-loaded and applied at peer startup.
+.. note:: Go plugins have a number of practical restrictions that require them
+   to be compiled and linked in the same build environment as the peer.
+   Differences in Go package versions, compiler versions, tags, and even GOPATH
+   values will result in runtime failures when loading or executing the plugin
+   logic.
+
+By default, A chaincode will use the built in endorsement and validation logic.
+However, users have the option of selecting custom endorsement and validation
+plugins as part of the chaincode definition. An administrator can extend the
+endorsement/validation logic available to the peer by customizing the peer's
+local configuration.
 
 Configuration
 -------------
@@ -69,13 +71,12 @@ The function is an instance method of the ``HandlerLibrary`` construct under
 validation logic to be added, this construct needs to be extended with any
 additional methods.
 
-Since this is cumbersome and poses a deployment challenge, one can also deploy
-custom endorsement and validation as a Golang plugin by adding another property
-under the ``name`` called ``library``.
+If the custom code is built as a Go plugin, the ``library`` property must be
+provided and set to the location of the shared library.
 
-For example, if we have custom endorsement and validation logic that represents
-state-based endorsement which is implemented as a plugin, we would have the following
-entries in the configuration in ``core.yaml``:
+For example, if we have custom endorsement and validation logic which is
+implemented as a plugin, we would have the following entries in the configuration
+in ``core.yaml``:
 
 .. code-block:: YAML
 
@@ -83,17 +84,24 @@ entries in the configuration in ``core.yaml``:
         endorsers:
           escc:
             name: DefaultEndorsement
-          statebased:
-            name: state_based
-            library: /etc/hyperledger/fabric/plugins/state_based_endorsement.so
+          custom:
+            name: customEndorsement
+            library: /etc/hyperledger/fabric/plugins/customEndorsement.so
         validators:
           vscc:
             name: DefaultValidation
-          statebased:
-            name: state_based
-            library: /etc/hyperledger/fabric/plugins/state_based_validation.so
+          custom:
+            name: customValidation
+            library: /etc/hyperledger/fabric/plugins/customValidation.so
 
 And we'd have to place the ``.so`` plugin files in the peer's local file system.
+
+The name of the custom plugin needs to be referenced by the chaincode definition
+to be used by the chaincode. If you are using the peer CLI to approve the
+chaincode definition, use the ``--escc`` and ``--vscc`` flag to select the name
+of the custom endorsement or validation library. If you are using the
+Fabric SDK for Node.js, visit `How to install and start your chaincode <https://hyperledger.github.io/fabric-sdk-node/{BRANCH}/tutorial-chaincode-lifecycle.html>`__.
+For more information, see :doc:`chaincode_lifecycle`.
 
 .. note:: Hereafter, custom endorsement or validation logic implementation is
           going to be referred to as "plugins", even if they are compiled into
@@ -257,18 +265,24 @@ Currently Fabric comes with the following dependencies for validation plugins:
 
     // State defines interaction with the world state
     type State interface {
-    	// GetStateMultipleKeys gets the values for multiple keys in a single call
-    	GetStateMultipleKeys(namespace string, keys []string) ([][]byte, error)
+        // GetStateMultipleKeys gets the values for multiple keys in a single call
+        GetStateMultipleKeys(namespace string, keys []string) ([][]byte, error)
 
-    	// GetStateRangeScanIterator returns an iterator that contains all the key-values between given key ranges.
-    	// startKey is included in the results and endKey is excluded. An empty startKey refers to the first available key
-    	// and an empty endKey refers to the last available key. For scanning all the keys, both the startKey and the endKey
-    	// can be supplied as empty strings. However, a full scan should be used judiciously for performance reasons.
-    	// The returned ResultsIterator contains results of type *KV which is defined in protos/ledger/queryresult.
-    	GetStateRangeScanIterator(namespace string, startKey string, endKey string) (ResultsIterator, error)
+        // GetStateRangeScanIterator returns an iterator that contains all the key-values between given key ranges.
+        // startKey is included in the results and endKey is excluded. An empty startKey refers to the first available key
+        // and an empty endKey refers to the last available key. For scanning all the keys, both the startKey and the endKey
+        // can be supplied as empty strings. However, a full scan should be used judiciously for performance reasons.
+        // The returned ResultsIterator contains results of type *KV which is defined in fabric-protos/ledger/queryresult.
+        GetStateRangeScanIterator(namespace string, startKey string, endKey string) (ResultsIterator, error)
 
-    	// Done releases resources occupied by the State
-    	Done()
+        // GetStateMetadata returns the metadata for given namespace and key
+        GetStateMetadata(namespace, key string) (map[string][]byte, error)
+
+        // GetPrivateDataMetadata gets the metadata of a private data item identified by a tuple <namespace, collection, key>
+        GetPrivateDataMetadata(namespace, collection, key string) (map[string][]byte, error)
+
+        // Done releases resources occupied by the State
+        Done()
     }
 
 Important notes
@@ -291,6 +305,13 @@ Important notes
   if an ``ExecutionFailureError`` is returned, the chain processing halts instead
   of marking the transaction as invalid. This is to prevent state divergence
   between different peers.
+
+- **Error handling for private metadata retrieval**: In case a plugin retrieves
+  metadata for private data by making use of the ``StateFetcher`` interface,
+  it is important that errors are handled as follows: ``CollConfigNotDefinedError``
+  and ``InvalidCollNameError``, signalling that the specified collection does
+  not exist, should be handled as deterministic errors and should not lead the
+  plugin to return an ``ExecutionFailureError``.
 
 - **Importing Fabric code into the plugin**: Importing code that belongs to Fabric
   other than protobufs as part of the plugin is highly discouraged, and can lead

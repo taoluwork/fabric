@@ -68,9 +68,7 @@ func (r *Recorder) Entries() []string {
 	defer r.mutex.RUnlock()
 
 	entries := make([]string, len(r.entries), cap(r.entries))
-	for i, v := range r.entries {
-		entries[i] = v
-	}
+	copy(entries, r.entries)
 	return entries
 }
 
@@ -106,9 +104,7 @@ func (r *Recorder) Messages() []string {
 	defer r.mutex.RUnlock()
 
 	messages := make([]string, len(r.messages), cap(r.messages))
-	for i, v := range r.messages {
-		messages[i] = v
-	}
+	copy(messages, r.messages)
 	return messages
 }
 
@@ -143,7 +139,6 @@ type RecordingCore struct {
 	zapcore.LevelEnabler
 	encoder  zapcore.Encoder
 	recorder *Recorder
-	fields   []zapcore.Field
 	writer   zapcore.WriteSyncer
 }
 
@@ -201,9 +196,9 @@ func (t *TestingWriter) Sync() error { return nil }
 
 type Option func(r *RecordingCore, l *zap.Logger) *zap.Logger
 
-func Named(moduleName string) Option {
+func Named(loggerName string) Option {
 	return func(r *RecordingCore, l *zap.Logger) *zap.Logger {
-		return l.Named(moduleName)
+		return l.Named(loggerName)
 	}
 }
 

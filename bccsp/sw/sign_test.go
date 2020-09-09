@@ -23,7 +23,7 @@ import (
 
 	mocks2 "github.com/hyperledger/fabric/bccsp/mocks"
 	"github.com/hyperledger/fabric/bccsp/sw/mocks"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSign(t *testing.T) {
@@ -43,10 +43,10 @@ func TestSign(t *testing.T) {
 		Value:     expectetValue,
 		Err:       nil,
 	}
-	csp := CSP{signers: signers}
+	csp := CSP{Signers: signers}
 	value, err := csp.Sign(expectedKey, expectetDigest, expectedOpts)
-	assert.Equal(t, expectetValue, value)
-	assert.Nil(t, err)
+	require.Equal(t, expectetValue, value)
+	require.Nil(t, err)
 
 	signers = make(map[reflect.Type]Signer)
 	signers[reflect.TypeOf(&mocks2.MockKey{})] = &mocks.Signer{
@@ -56,8 +56,8 @@ func TestSign(t *testing.T) {
 		Value:     nil,
 		Err:       expectedErr,
 	}
-	csp = CSP{signers: signers}
+	csp = CSP{Signers: signers}
 	value, err = csp.Sign(expectedKey, expectetDigest, expectedOpts)
-	assert.Nil(t, value)
-	assert.Contains(t, err.Error(), expectedErr.Error())
+	require.Nil(t, value)
+	require.Contains(t, err.Error(), expectedErr.Error())
 }

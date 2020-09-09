@@ -9,41 +9,62 @@ package fabricconfig
 import "time"
 
 type Orderer struct {
-	General    *General    `yaml:"General,omitempty"`
-	FileLedger *FileLedger `yaml:"FileLedger,omitempty"`
-	RAMLedger  *RAMLedger  `yaml:"RAMLedger,omitempty"`
-	Kafka      *Kafka      `yaml:"Kafka,omitempty"`
+	General              *General              `yaml:"General,omitempty"`
+	FileLedger           *FileLedger           `yaml:"FileLedger,omitempty"`
+	Kafka                *Kafka                `yaml:"Kafka,omitempty"`
+	Operations           *OrdererOperations    `yaml:"Operations,omitempty"`
+	ChannelParticipation *ChannelParticipation `yaml:"ChannelParticipation,omitempty"`
 
 	ExtraProperties map[string]interface{} `yaml:",inline,omitempty"`
 }
 
 type General struct {
-	LedgerType     string                 `yaml:"LedgerType,omitempty"`
-	ListenAddress  string                 `yaml:"ListenAddress,omitempty"`
-	ListenPort     int                    `yaml:"ListenPort,omitempty"`
-	TLS            *OrdererTLS            `yaml:"TLS,omitempty"`
-	Keepalive      *OrdererKeepalive      `yaml:"Keepalive,omitempty"`
-	LogLevel       string                 `yaml:"LogLevel,omitempty"`
-	LogFormat      string                 `yaml:"LogFormat,omitempty"`
-	GenesisMethod  string                 `yaml:"GenesisMethod,omitempty"`
-	GenesisProfile string                 `yaml:"GenesisProfile,omitempty"`
-	GenesisFile    string                 `yaml:"GenesisFile,omitempty"`
-	LocalMSPDir    string                 `yaml:"LocalMSPDir,omitempty"`
-	LocalMSPID     string                 `yaml:"LocalMSPID,omitempty"`
-	Profile        *OrdererProfile        `yaml:"Profile,omitempty"`
-	BCCSP          *BCCSP                 `yaml:"BCCSP,omitempty"`
-	Authentication *OrdererAuthentication `yaml:"Authentication,omitempty"`
+	ListenAddress   string                 `yaml:"ListenAddress,omitempty"`
+	ListenPort      uint16                 `yaml:"ListenPort,omitempty"`
+	TLS             *OrdererTLS            `yaml:"TLS,omitempty"`
+	Keepalive       *OrdererKeepalive      `yaml:"Keepalive,omitempty"`
+	BootstrapMethod string                 `yaml:"BootstrapMethod,omitempty"`
+	GenesisProfile  string                 `yaml:"GenesisProfile,omitempty"`
+	GenesisFile     string                 `yaml:"GenesisFile,omitempty"` // will be replaced by the BootstrapFile
+	BootstrapFile   string                 `yaml:"BootstrapFile,omitempty"`
+	LocalMSPDir     string                 `yaml:"LocalMSPDir,omitempty"`
+	LocalMSPID      string                 `yaml:"LocalMSPID,omitempty"`
+	Profile         *OrdererProfile        `yaml:"Profile,omitempty"`
+	BCCSP           *BCCSP                 `yaml:"BCCSP,omitempty"`
+	Authentication  *OrdererAuthentication `yaml:"Authentication,omitempty"`
+	Cluster         *Cluster               `yaml:"Cluster,omitempty"`
 
 	ExtraProperties map[string]interface{} `yaml:",inline,omitempty"`
 }
 
+type Cluster struct {
+	ListenAddress                        string        `yaml:"ListenAddress,omitempty"`
+	ListenPort                           uint16        `yaml:"ListenPort,omitempty"`
+	ServerCertificate                    string        `yaml:"ServerCertificate,omitempty"`
+	ServerPrivateKey                     string        `yaml:"ServerPrivateKey,omitempty"`
+	ClientCertificate                    string        `yaml:"ClientCertificate,omitempty"`
+	ClientPrivateKey                     string        `yaml:"ClientPrivateKey,omitempty"`
+	RootCAs                              []string      `yaml:"RootCAs,omitempty"`
+	DialTimeout                          time.Duration `yaml:"DialTimeout,omitempty"`
+	RPCTimeout                           time.Duration `yaml:"RPCTimeout,omitempty"`
+	ReplicationBufferSize                int           `yaml:"ReplicationBufferSize,omitempty"`
+	ReplicationPullTimeout               time.Duration `yaml:"ReplicationPullTimeout,omitempty"`
+	ReplicationRetryTimeout              time.Duration `yaml:"ReplicationRetryTimeout,omitempty"`
+	ReplicationBackgroundRefreshInterval time.Duration `yaml:"ReplicationBackgroundRefreshInterval,omitempty"`
+	ReplicationMaxRetries                int           `yaml:"ReplicationMaxRetries,omitempty"`
+	SendBufferSize                       int           `yaml:"SendBufferSize,omitempty"`
+	CertExpirationWarningThreshold       time.Duration `yaml:"CertExpirationWarningThreshold,omitempty"`
+	TLSHandshakeTimeShift                time.Duration `yaml:"TLSHandshakeTimeShift,omitempty"`
+}
+
 type OrdererTLS struct {
-	Enabled            bool     `yaml:"Enabled"`
-	PrivateKey         string   `yaml:"PrivateKey,omitempty"`
-	Certificate        string   `yaml:"Certificate,omitempty"`
-	RootCAs            []string `yaml:"RootCAs,omitempty"`
-	ClientAuthRequired bool     `yaml:"ClientAuthRequired"`
-	ClientRootCAs      []string `yaml:"ClientRootCAs,omitempty"`
+	Enabled               bool          `yaml:"Enabled"`
+	PrivateKey            string        `yaml:"PrivateKey,omitempty"`
+	Certificate           string        `yaml:"Certificate,omitempty"`
+	RootCAs               []string      `yaml:"RootCAs,omitempty"`
+	ClientAuthRequired    bool          `yaml:"ClientAuthRequired"`
+	ClientRootCAs         []string      `yaml:"ClientRootCAs,omitempty"`
+	TLSHandshakeTimeShift time.Duration `yaml:"TLSHandshakeTimeShift,omitempty"`
 }
 
 type OrdererSASLPlain struct {
@@ -73,11 +94,6 @@ type OrdererTopic struct {
 
 type FileLedger struct {
 	Location string `yaml:"Location,omitempty"`
-	Prefix   string `yaml:"Prefix,omitempty"`
-}
-
-type RAMLedger struct {
-	HistorySize int `yaml:"HistorySize,omitempty"`
 }
 
 type Kafka struct {
@@ -108,4 +124,27 @@ type NetworkTimeouts struct {
 type Backoff struct {
 	RetryBackoff time.Duration `yaml:"RetryBackoff,omitempty"`
 	RetryMax     int           `yaml:"RetryMax,omitempty"`
+}
+
+type OrdererOperations struct {
+	ListenAddress string          `yaml:"ListenAddress,omitempty"`
+	Metrics       *OrdererMetrics `yaml:"Metrics,omitempty"`
+	TLS           *OrdererTLS     `yaml:"TLS"`
+}
+
+type OrdererMetrics struct {
+	Provider string         `yaml:"Provider"`
+	Statsd   *OrdererStatsd `yaml:"Statsd,omitempty"`
+}
+
+type OrdererStatsd struct {
+	Network       string        `yaml:"Network,omitempty"`
+	Address       string        `yaml:"Address,omitempty"`
+	WriteInterval time.Duration `yaml:"WriteInterval,omitempty"`
+	Prefix        string        `yaml:"Prefix,omitempty"`
+}
+
+type ChannelParticipation struct {
+	Enabled            bool   `yaml:"Enabled"`
+	MaxRequestBodySize string `yaml:"MaxRequestBodySize,omitempty"`
 }

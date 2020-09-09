@@ -12,16 +12,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/hyperledger/fabric-protos-go/gossip"
+	"github.com/hyperledger/fabric-protos-go/msp"
 	"github.com/hyperledger/fabric/cmd/common"
 	. "github.com/hyperledger/fabric/discovery/client"
-	"github.com/hyperledger/fabric/discovery/cmd"
+	discovery "github.com/hyperledger/fabric/discovery/cmd"
 	"github.com/hyperledger/fabric/discovery/cmd/mocks"
-	"github.com/hyperledger/fabric/protos/gossip"
-	"github.com/hyperledger/fabric/protos/msp"
-	"github.com/hyperledger/fabric/protos/utils"
+	"github.com/hyperledger/fabric/gossip/protoext"
+	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/mock"
+	"github.com/stretchr/testify/require"
 )
 
 func TestPeerCmd(t *testing.T) {
@@ -33,14 +34,14 @@ func TestPeerCmd(t *testing.T) {
 	t.Run("no server supplied", func(t *testing.T) {
 		cmd.SetServer(nil)
 		err := cmd.Execute(common.Config{})
-		assert.Equal(t, err.Error(), "no server specified")
+		require.Equal(t, err.Error(), "no server specified")
 	})
 
 	t.Run("Server return error", func(t *testing.T) {
 		cmd.SetServer(&server)
 		stub.On("Send", server, mock.Anything, mock.Anything).Return(nil, errors.New("deadline exceeded")).Once()
 		err := cmd.Execute(common.Config{})
-		assert.Contains(t, err.Error(), "deadline exceeded")
+		require.Contains(t, err.Error(), "deadline exceeded")
 	})
 
 	t.Run("Channel(less) peer query", func(t *testing.T) {
@@ -51,13 +52,13 @@ func TestPeerCmd(t *testing.T) {
 		var emptyChannel string
 		parser.On("ParseResponse", emptyChannel, mock.Anything).Return(nil)
 		err := cmd.Execute(common.Config{})
-		assert.NoError(t, err)
+		require.NoError(t, err)
 
 		channel := "mychannel"
 		cmd.SetChannel(&channel)
 		parser.On("ParseResponse", channel, mock.Anything).Return(nil)
 		err = cmd.Execute(common.Config{})
-		assert.NoError(t, err)
+		require.NoError(t, err)
 	})
 }
 
@@ -71,7 +72,7 @@ func TestParsePeers(t *testing.T) {
 		IdBytes: []byte("identity"),
 	}
 
-	idBytes := utils.MarshalOrPanic(sID)
+	idBytes := protoutil.MarshalOrPanic(sID)
 
 	validPeer := &Peer{
 		MSPID:            "Org1MSP",
@@ -99,12 +100,12 @@ func TestParsePeers(t *testing.T) {
 	for channel, expected := range channel2expected {
 		buff.Reset()
 		err := parser.ParseResponse(channel, res)
-		assert.NoError(t, err)
-		assert.Equal(t, fmt.Sprintf("%s\n", expected), buff.String())
+		require.NoError(t, err)
+		require.Equal(t, fmt.Sprintf("%s\n", expected), buff.String())
 	}
 }
 
-func aliveMessage(id int) *gossip.SignedGossipMessage {
+func aliveMessage(id int) *protoext.SignedGossipMessage {
 	g := &gossip.GossipMessage{
 		Content: &gossip.GossipMessage_AliveMsg{
 			AliveMsg: &gossip.AliveMessage{
@@ -118,11 +119,11 @@ func aliveMessage(id int) *gossip.SignedGossipMessage {
 			},
 		},
 	}
-	sMsg, _ := g.NoopSign()
+	sMsg, _ := protoext.NoopSign(g)
 	return sMsg
 }
 
-func stateInfoMessage(height uint64) *gossip.SignedGossipMessage {
+func stateInfoMessage(height uint64) *protoext.SignedGossipMessage {
 	g := &gossip.GossipMessage{
 		Content: &gossip.GossipMessage_StateInfo{
 			StateInfo: &gossip.StateInfo{
@@ -140,6 +141,6 @@ func stateInfoMessage(height uint64) *gossip.SignedGossipMessage {
 			},
 		},
 	}
-	sMsg, _ := g.NoopSign()
+	sMsg, _ := protoext.NoopSign(g)
 	return sMsg
 }

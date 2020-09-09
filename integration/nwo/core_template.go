@@ -8,25 +8,15 @@ package nwo
 
 const DefaultCoreTemplate = `---
 logging:
-  level:      info
-  cauthdsl:   warning
-  gossip:     warning
-  grpc:       error
-  ledger:     info
-  msp:        warning
-  policies:   warning
-  peer:
-    gossip: warning
   format: '%{color}%{time:2006-01-02 15:04:05.000 MST} [%{module}] %{shortfunc} -> %{level:.4s} %{id:03x}%{color:reset} %{message}'
 
 peer:
   id: {{ Peer.ID }}
   networkId: {{ .NetworkID }}
-  address: 0.0.0.0:{{ .PeerPort Peer "Listen" }}
-  addressAutoDetect: false
-  listenAddress: 0.0.0.0:{{ .PeerPort Peer "Listen" }}
+  address: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
+  addressAutoDetect: true
+  listenAddress: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
   chaincodeListenAddress: 0.0.0.0:{{ .PeerPort Peer "Chaincode" }}
-  gomaxprocs: -1
   keepalive:
     minInterval: 60s
     client:
@@ -36,11 +26,13 @@ peer:
       interval: 60s
       timeout: 20s
   gossip:
-    bootstrap: 0.0.0.0:{{ .PeerPort Peer "Listen" }}
-    useLeaderElection: true
-    orgLeader: false
-    endpoint:
-    maxBlockCountToStore: 100
+    bootstrap: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
+    endpoint: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
+    externalEndpoint: 127.0.0.1:{{ .PeerPort Peer "Listen" }}
+    useLeaderElection: false
+    orgLeader: true
+    membershipTrackerInterval: 5s
+    maxBlockCountToStore: 10
     maxPropagationBurstLatency: 10ms
     maxPropagationBurstSize: 10
     propagateIterations: 1
@@ -61,35 +53,53 @@ peer:
     aliveTimeInterval: 5s
     aliveExpirationTimeout: 25s
     reconnectInterval: 25s
-    externalEndpoint: 0.0.0.0:{{ .PeerPort Peer "Listen" }}
     election:
       startupGracePeriod: 15s
       membershipSampleInterval: 1s
       leaderAliveThreshold: 10s
       leaderElectionDuration: 5s
     pvtData:
-      pullRetryThreshold: 60s
+      pullRetryThreshold: 7s
       transientstoreMaxBlockRetention: 1000
       pushAckTimeout: 3s
+      btlPullMargin: 10
+      reconcileBatchSize: 10
+      reconcileSleepInterval: 10s
+      reconciliationEnabled: true
+      skipPullingInvalidTransactionsDuringCommit: false
+      implicitCollectionDisseminationPolicy:
+        requiredPeerCount: 0
+        maxPeerCount: 1
+    state:
+       enabled: false
+       checkInterval: 10s
+       responseTimeout: 3s
+       batchSize: 10
+       blockBufferSize: 20
+       maxRetries: 3
   events:
-    address: 0.0.0.0:{{ .PeerPort Peer "Events" }}
+    address: 127.0.0.1:{{ .PeerPort Peer "Events" }}
     buffersize: 100
     timeout: 10ms
     timewindow: 15m
     keepalive:
       minInterval: 60s
   tls:
-    enabled:  false
-    clientAuthRequired: false
+    enabled: {{ .TLSEnabled }}
+    clientAuthRequired: {{ .ClientAuthRequired }}
     cert:
-      file: tls/server.crt
+      file: {{ .PeerLocalTLSDir Peer }}/server.crt
     key:
-      file: tls/server.key
+      file: {{ .PeerLocalTLSDir Peer }}/server.key
+    clientCert:
+      file: {{ .PeerLocalTLSDir Peer }}/server.crt
+    clientKey:
+      file: {{ .PeerLocalTLSDir Peer }}/server.key
     rootcert:
-      file: tls/ca.crt
+      file: {{ .PeerLocalTLSDir Peer }}/ca.crt
     clientRootCAs:
       files:
-      - tls/ca.crt
+      - {{ .PeerLocalTLSDir Peer }}/ca.crt
   authentication:
     timewindow: 15m
   fileSystemPath: filesystem
@@ -108,7 +118,6 @@ peer:
   profile:
     enabled:     false
     listenAddress: 127.0.0.1:{{ .PeerPort Peer "ProfilePort" }}
-  adminService:
   handlers:
     authFilters:
     - name: DefaultAuth
@@ -128,6 +137,10 @@ peer:
     authCacheMaxSize: 1000
     authCachePurgeRetentionRatio: 0.75
     orgMembersAllowedAccess: false
+  limits:
+    concurrency:
+      endorserService: 100
+      deliverService: 100
 
 vm:
   endpoint: unix:///var/run/docker.sock
@@ -140,7 +153,7 @@ vm:
         file: docker/tls.crt
       key:
         file: docker/tls.key
-    attachStdout: false
+    attachStdout: true
     hostConfig:
       NetworkMode: host
       LogConfig:
@@ -151,30 +164,36 @@ vm:
       Memory: 2147483648
 
 chaincode:
-  builder: $(DOCKER_NS)/fabric-ccenv:$(ARCH)-$(PROJECT_VERSION)
+  builder: $(DOCKER_NS)/fabric-ccenv:$(PROJECT_VERSION)
   pull: false
   golang:
-    runtime: $(BASE_DOCKER_NS)/fabric-baseos:$(ARCH)-$(BASE_VERSION)
+    runtime: $(DOCKER_NS)/fabric-baseos:$(PROJECT_VERSION)
     dynamicLink: false
-  car:
-    runtime: $(BASE_DOCKER_NS)/fabric-baseos:$(ARCH)-$(BASE_VERSION)
   java:
-    runtime: $(DOCKER_NS)/fabric-javaenv:$(ARCH)-$(PROJECT_VERSION)
+    runtime: $(DOCKER_NS)/fabric-javaenv:latest
   node:
-      runtime: $(BASE_DOCKER_NS)/fabric-baseimage:$(ARCH)-$(BASE_VERSION)
+    runtime: $(DOCKER_NS)/fabric-nodeenv:latest
+  installTimeout: 300s
   startuptimeout: 300s
   executetimeout: 30s
   mode: net
   keepalive: 0
   system:
-    cscc: enable
-    lscc: enable
-    qscc: enable
-  systemPlugins:
+    _lifecycle: enable
+    cscc:       enable
+    lscc:       enable
+    qscc:       enable
   logging:
     level:  info
     shim:   warning
     format: '%{color}%{time:2006-01-02 15:04:05.000 MST} [%{module}] %{shortfunc} -> %{level:.4s} %{id:03x}%{color:reset} %{message}'
+  externalBuilders: {{ range .ExternalBuilders }}
+    - path: {{ .Path }}
+      name: {{ .Name }}
+      propagateEnvironment: {{ range .PropagateEnvironment }}
+         - {{ . }}
+      {{- end }}
+  {{- end }}
 
 ledger:
   blockchain:
@@ -192,4 +211,29 @@ ledger:
       warmIndexesAfterNBlocks: 1
   history:
     enableHistoryDatabase: true
+
+operations:
+  listenAddress: 127.0.0.1:{{ .PeerPort Peer "Operations" }}
+  tls:
+    enabled: {{ .TLSEnabled }}
+    cert:
+      file: {{ .PeerLocalTLSDir Peer }}/server.crt
+    key:
+      file: {{ .PeerLocalTLSDir Peer }}/server.key
+    clientAuthRequired: {{ .ClientAuthRequired }}
+    clientRootCAs:
+      files:
+      - {{ .PeerLocalTLSDir Peer }}/ca.crt
+metrics:
+  provider: {{ .MetricsProvider }}
+  statsd:
+    {{- if .StatsdEndpoint }}
+    network: tcp
+    address: {{ .StatsdEndpoint }}
+    {{- else }}
+    network: udp
+    address: 127.0.0.1:8125
+    {{- end }}
+    writeInterval: 5s
+    prefix: {{ ReplaceAll (ToLower Peer.ID) "." "_" }}
 `

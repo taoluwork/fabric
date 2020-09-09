@@ -7,7 +7,7 @@ SPDX-License-Identifier: Apache-2.0
 package validation
 
 import (
-	"github.com/hyperledger/fabric/core/handlers/validation/api"
+	validation "github.com/hyperledger/fabric/core/handlers/validation/api"
 )
 
 // State defines interaction with the world state
@@ -19,14 +19,14 @@ type State interface {
 	// startKey is included in the results and endKey is excluded. An empty startKey refers to the first available key
 	// and an empty endKey refers to the last available key. For scanning all the keys, both the startKey and the endKey
 	// can be supplied as empty strings. However, a full scan should be used judiciously for performance reasons.
-	// The returned ResultsIterator contains results of type *KV which is defined in protos/ledger/queryresult.
+	// The returned ResultsIterator contains results of type *KV which is defined in fabric-protos/ledger/queryresult.
 	GetStateRangeScanIterator(namespace string, startKey string, endKey string) (ResultsIterator, error)
 
 	// GetStateMetadata returns the metadata for given namespace and key
 	GetStateMetadata(namespace, key string) (map[string][]byte, error)
 
-	// GetPrivateDataMetadata gets the metadata of a private data item identified by a tuple <namespace, collection, key>
-	GetPrivateDataMetadata(namespace, collection, key string) (map[string][]byte, error)
+	// GetPrivateDataMetadataByHash gets the metadata of a private data item identified by a tuple <namespace, collection, keyhash>
+	GetPrivateDataMetadataByHash(namespace, collection string, keyhash []byte) (map[string][]byte, error)
 
 	// Done releases resources occupied by the State
 	Done()

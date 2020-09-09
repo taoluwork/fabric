@@ -11,25 +11,26 @@ import (
 	"math/rand"
 	"runtime"
 	"strconv"
+	"sync"
 	"testing"
 	"time"
 
-	"github.com/hyperledger/fabric/common/cauthdsl"
-	"github.com/hyperledger/fabric/core/handlers/validation/api/state"
-	"github.com/hyperledger/fabric/protos/ledger/rwset"
-	"github.com/hyperledger/fabric/protos/ledger/rwset/kvrwset"
-	pb "github.com/hyperledger/fabric/protos/peer"
-	"github.com/hyperledger/fabric/protos/utils"
+	"github.com/hyperledger/fabric-protos-go/ledger/rwset"
+	"github.com/hyperledger/fabric-protos-go/ledger/rwset/kvrwset"
+	pb "github.com/hyperledger/fabric-protos-go/peer"
+	"github.com/hyperledger/fabric/common/policydsl"
+	validation "github.com/hyperledger/fabric/core/handlers/validation/api/state"
+	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type mockState struct {
-	GetStateMetadataRv        map[string][]byte
-	GetStateMetadataErr       error
-	GetPrivateDataMetadataRv  map[string][]byte
-	GetPrivateDataMetadataErr error
-	DoneCalled                bool
+	GetStateMetadataRv              map[string][]byte
+	GetStateMetadataErr             error
+	GetPrivateDataMetadataByHashRv  map[string][]byte
+	GetPrivateDataMetadataByHashErr error
+	DoneCalled                      bool
 }
 
 func (ms *mockState) GetStateMultipleKeys(namespace string, keys []string) ([][]byte, error) {
@@ -44,8 +45,8 @@ func (ms *mockState) GetStateMetadata(namespace, key string) (map[string][]byte,
 	return ms.GetStateMetadataRv, ms.GetStateMetadataErr
 }
 
-func (ms *mockState) GetPrivateDataMetadata(namespace, collection, key string) (map[string][]byte, error) {
-	return ms.GetPrivateDataMetadataRv, ms.GetPrivateDataMetadataErr
+func (ms *mockState) GetPrivateDataMetadataByHash(namespace, collection string, keyhash []byte) (map[string][]byte, error) {
+	return ms.GetPrivateDataMetadataByHashRv, ms.GetPrivateDataMetadataByHashErr
 }
 
 func (ms *mockState) Done() {
@@ -53,12 +54,46 @@ func (ms *mockState) Done() {
 }
 
 type mockStateFetcher struct {
-	FetchStateRv  *mockState
-	FetchStateErr error
+	mutex          sync.Mutex
+	returnedStates []*mockState
+	FetchStateRv   *mockState
+	FetchStateErr  error
+}
+
+func (ms *mockStateFetcher) DoneCalled() bool {
+	for _, s := range ms.returnedStates {
+		if !s.DoneCalled {
+			return false
+		}
+	}
+	return true
+}
+
+type mockTranslator struct {
+	TranslateError error
+}
+
+func (n *mockTranslator) Translate(b []byte) ([]byte, error) {
+	return b, n.TranslateError
 }
 
 func (ms *mockStateFetcher) FetchState() (validation.State, error) {
-	return ms.FetchStateRv, ms.FetchStateErr
+	var rv *mockState
+	if ms.FetchStateRv != nil {
+		rv = &mockState{
+			GetPrivateDataMetadataByHashErr: ms.FetchStateRv.GetPrivateDataMetadataByHashErr,
+			GetStateMetadataErr:             ms.FetchStateRv.GetStateMetadataErr,
+			GetPrivateDataMetadataByHashRv:  ms.FetchStateRv.GetPrivateDataMetadataByHashRv,
+			GetStateMetadataRv:              ms.FetchStateRv.GetStateMetadataRv,
+		}
+		ms.mutex.Lock()
+		if ms.returnedStates != nil {
+			ms.returnedStates = make([]*mockState, 0, 1)
+		}
+		ms.returnedStates = append(ms.returnedStates, rv)
+		ms.mutex.Unlock()
+	}
+	return rv, ms.FetchStateErr
 }
 
 func TestSimple(t *testing.T) {
@@ -67,27 +102,27 @@ func TestSimple(t *testing.T) {
 	// Scenario: validation parameter is retrieved with no dependency
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{},
 		StateFetcher: ms,
 	}
 
 	sp, err := pm.GetValidationParameterForKey("cc", "coll", "key", 0, 0)
-	assert.NoError(t, err)
-	assert.Equal(t, utils.MarshalOrPanic(spe), sp)
-	assert.True(t, mr.DoneCalled)
+	require.NoError(t, err)
+	require.Equal(t, protoutil.MarshalOrPanic(spe), sp)
+	require.True(t, ms.DoneCalled())
 }
 
 func rwsetUpdatingMetadataFor(cc, key string) []byte {
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	return utils.MarshalOrPanic(
+	return protoutil.MarshalOrPanic(
 		&rwset.TxReadWriteSet{
 			NsRwset: []*rwset.NsReadWriteSet{
 				{
 					Namespace: cc,
-					Rwset: utils.MarshalOrPanic(&kvrwset.KVRWSet{
+					Rwset: protoutil.MarshalOrPanic(&kvrwset.KVRWSet{
 						MetadataWrites: []*kvrwset.KVMetadataWrite{
 							{
 								Key: key,
@@ -105,7 +140,7 @@ func rwsetUpdatingMetadataFor(cc, key string) []byte {
 
 func pvtRwsetUpdatingMetadataFor(cc, coll, key string) []byte {
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	return utils.MarshalOrPanic(
+	return protoutil.MarshalOrPanic(
 		&rwset.TxReadWriteSet{
 			NsRwset: []*rwset.NsReadWriteSet{
 				{
@@ -113,7 +148,7 @@ func pvtRwsetUpdatingMetadataFor(cc, coll, key string) []byte {
 					CollectionHashedRwset: []*rwset.CollectionHashedReadWriteSet{
 						{
 							CollectionName: coll,
-							HashedRwset: utils.MarshalOrPanic(&kvrwset.HashedRWSet{
+							HashedRwset: protoutil.MarshalOrPanic(&kvrwset.HashedRWSet{
 								MetadataWrites: []*kvrwset.KVMetadataWriteHash{
 									{
 										KeyHash: []byte(key),
@@ -137,7 +172,7 @@ func runFunctions(t *testing.T, seed int64, funcs ...func()) {
 	for _, i := range r.Perm(len(funcs)) {
 		iLcl := i
 		go func() {
-			assert.NotPanics(t, funcs[iLcl], "assert failure occurred with seed %d", seed)
+			require.NotPanics(t, funcs[iLcl], "assert failure occurred with seed %d", seed)
 			c <- struct{}{}
 		}()
 	}
@@ -146,22 +181,18 @@ func runFunctions(t *testing.T, seed int64, funcs ...func()) {
 	}
 }
 
-func TestDependencyNoConflict(t *testing.T) {
+func TestTranslatorBadPolicy(t *testing.T) {
 	t.Parallel()
 	seed := time.Now().Unix()
 
-	// Scenario: validation parameter is retrieved successfully
-	// for a ledger key for transaction (1,1) after waiting for
-	// the dependency introduced by transaction (1,0). Retrieval
-	// was successful because transaction (1,0) was invalid and
-	// so we could safely retrieve the validation parameter from
-	// the ledger.
+	// Scenario: we verify that translation from SignaturePolicyEnvelope to ApplicationPolicy fails appropriately
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("barf")}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: []byte("barf")}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	mt := &mockTranslator{}
+	mt.TranslateError = errors.New("you shall not pass")
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: mt, StateFetcher: ms}
 
 	cc, coll, key := "cc", "", "key"
 
@@ -184,9 +215,93 @@ func TestDependencyNoConflict(t *testing.T) {
 
 	sp := <-resC
 	err := <-errC
-	assert.NoError(t, err, "assert failure occurred with seed %d", seed)
-	assert.Equal(t, utils.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
-	assert.True(t, mr.DoneCalled, "assert failure occurred with seed %d", seed)
+	require.Errorf(t, err, "assert failure occurred with seed %d", seed)
+	require.Contains(t, err.Error(), "could not translate policy for cc:key: you shall not pass", "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
+	require.Nil(t, sp, "assert failure occurred with seed %d", seed)
+}
+
+func TestTranslatorBadPolicyPvt(t *testing.T) {
+	t.Parallel()
+	seed := time.Now().Unix()
+
+	// Scenario: we verify that translation from SignaturePolicyEnvelope to ApplicationPolicy fails appropriately with private data
+
+	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("barf")}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: []byte("barf")}}
+	ms := &mockStateFetcher{FetchStateRv: mr}
+	mt := &mockTranslator{}
+	mt.TranslateError = errors.New("you shall not pass")
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: mt, StateFetcher: ms}
+
+	cc, coll, key := "cc", "coll", "key"
+
+	rwsetbytes := rwsetUpdatingMetadataFor(cc, key)
+
+	resC := make(chan []byte, 1)
+	errC := make(chan error, 1)
+	runFunctions(t, seed,
+		func() {
+			pm.ExtractValidationParameterDependency(1, 0, rwsetbytes)
+		},
+		func() {
+			pm.SetTxValidationResult(cc, 1, 0, errors.New(""))
+		},
+		func() {
+			sp, err := pm.GetValidationParameterForKey(cc, coll, key, 1, 1)
+			resC <- sp
+			errC <- err
+		})
+
+	sp := <-resC
+	err := <-errC
+	require.Errorf(t, err, "assert failure occurred with seed %d", seed)
+	require.Contains(t, err.Error(), "could not translate policy for cc:coll:6b6579: you shall not pass", "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
+	require.Nil(t, sp, "assert failure occurred with seed %d", seed)
+}
+
+func TestDependencyNoConflict(t *testing.T) {
+	t.Parallel()
+	seed := time.Now().Unix()
+
+	// Scenario: validation parameter is retrieved successfully
+	// for a ledger key for transaction (1,1) after waiting for
+	// the dependency introduced by transaction (1,0). Retrieval
+	// was successful because transaction (1,0) was invalid and
+	// so we could safely retrieve the validation parameter from
+	// the ledger.
+
+	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
+	ms := &mockStateFetcher{FetchStateRv: mr}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
+
+	cc, coll, key := "cc", "", "key"
+
+	rwsetbytes := rwsetUpdatingMetadataFor(cc, key)
+
+	resC := make(chan []byte, 1)
+	errC := make(chan error, 1)
+	runFunctions(t, seed,
+		func() {
+			pm.ExtractValidationParameterDependency(1, 0, rwsetbytes)
+		},
+		func() {
+			pm.SetTxValidationResult(cc, 1, 0, errors.New(""))
+		},
+		func() {
+			sp, err := pm.GetValidationParameterForKey(cc, coll, key, 1, 1)
+			resC <- sp
+			errC <- err
+		})
+
+	sp := <-resC
+	err := <-errC
+	require.NoError(t, err, "assert failure occurred with seed %d", seed)
+	require.Equal(t, protoutil.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
 }
 
 func TestDependencyConflict(t *testing.T) {
@@ -202,10 +317,10 @@ func TestDependencyConflict(t *testing.T) {
 	// to the ledger component because of MVCC checks
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc, coll, key := "cc", "", "key"
 
@@ -228,9 +343,9 @@ func TestDependencyConflict(t *testing.T) {
 
 	sp := <-resC
 	err := <-errC
-	assert.Errorf(t, err, "assert failure occurred with seed %d", seed)
-	assert.IsType(t, &ValidationParameterUpdatedError{}, err, "assert failure occurred with seed %d", seed)
-	assert.Nil(t, sp, "assert failure occurred with seed %d", seed)
+	require.Errorf(t, err, "assert failure occurred with seed %d", seed)
+	require.IsType(t, &ValidationParameterUpdatedError{}, err, "assert failure occurred with seed %d", seed)
+	require.Nil(t, sp, "assert failure occurred with seed %d", seed)
 }
 
 func TestMultipleDependencyNoConflict(t *testing.T) {
@@ -245,10 +360,10 @@ func TestMultipleDependencyNoConflict(t *testing.T) {
 	// the ledger.
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc, coll, key := "cc", "", "key"
 
@@ -277,9 +392,9 @@ func TestMultipleDependencyNoConflict(t *testing.T) {
 
 	sp := <-resC
 	err := <-errC
-	assert.NoError(t, err, "assert failure occurred with seed %d", seed)
-	assert.Equal(t, utils.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
-	assert.True(t, mr.DoneCalled, "assert failure occurred with seed %d", seed)
+	require.NoError(t, err, "assert failure occurred with seed %d", seed)
+	require.Equal(t, protoutil.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
 }
 
 func TestMultipleDependencyConflict(t *testing.T) {
@@ -295,10 +410,10 @@ func TestMultipleDependencyConflict(t *testing.T) {
 	// to the ledger component because of MVCC checks
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc, coll, key := "cc", "", "key"
 
@@ -327,9 +442,9 @@ func TestMultipleDependencyConflict(t *testing.T) {
 
 	sp := <-resC
 	err := <-errC
-	assert.Errorf(t, err, "assert failure occurred with seed %d", seed)
-	assert.IsType(t, &ValidationParameterUpdatedError{}, err, "assert failure occurred with seed %d", seed)
-	assert.Nil(t, sp, "assert failure occurred with seed %d", seed)
+	require.Errorf(t, err, "assert failure occurred with seed %d", seed)
+	require.IsType(t, &ValidationParameterUpdatedError{}, err, "assert failure occurred with seed %d", seed)
+	require.Nil(t, sp, "assert failure occurred with seed %d", seed)
 }
 
 func TestPvtDependencyNoConflict(t *testing.T) {
@@ -339,10 +454,10 @@ func TestPvtDependencyNoConflict(t *testing.T) {
 	// Scenario: like TestDependencyNoConflict but for private data
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc, coll, key := "cc", "coll", "key"
 
@@ -365,9 +480,9 @@ func TestPvtDependencyNoConflict(t *testing.T) {
 
 	sp := <-resC
 	err := <-errC
-	assert.NoError(t, err, "assert failure occurred with seed %d", seed)
-	assert.Equal(t, utils.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
-	assert.True(t, mr.DoneCalled, "assert failure occurred with seed %d", seed)
+	require.NoError(t, err, "assert failure occurred with seed %d", seed)
+	require.Equal(t, protoutil.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
 }
 
 func TestPvtDependencyConflict(t *testing.T) {
@@ -377,10 +492,10 @@ func TestPvtDependencyConflict(t *testing.T) {
 	// Scenario: like TestDependencyConflict but for private data
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc, coll, key := "cc", "coll", "key"
 
@@ -403,10 +518,10 @@ func TestPvtDependencyConflict(t *testing.T) {
 
 	sp := <-resC
 	err := <-errC
-	assert.Errorf(t, err, "assert failure occurred with seed %d", seed)
-	assert.IsType(t, &ValidationParameterUpdatedError{}, err, "assert failure occurred with seed %d", seed)
-	assert.True(t, len(err.Error()) > 0, "assert failure occurred with seed %d", seed)
-	assert.Nil(t, sp, "assert failure occurred with seed %d", seed)
+	require.Errorf(t, err, "assert failure occurred with seed %d", seed)
+	require.IsType(t, &ValidationParameterUpdatedError{}, err, "assert failure occurred with seed %d", seed)
+	require.True(t, len(err.Error()) > 0, "assert failure occurred with seed %d", seed)
+	require.Nil(t, sp, "assert failure occurred with seed %d", seed)
 }
 
 func TestBlockValidationTerminatesBeforeNewBlock(t *testing.T) {
@@ -417,10 +532,10 @@ func TestBlockValidationTerminatesBeforeNewBlock(t *testing.T) {
 	// (2,0). This cannot happen and so we panic
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc, coll, key := "cc", "coll", "key"
 
@@ -430,7 +545,7 @@ func TestBlockValidationTerminatesBeforeNewBlock(t *testing.T) {
 	panickingFunc := func() {
 		pm.ExtractValidationParameterDependency(1, 0, rwsetBytes)
 	}
-	assert.Panics(t, panickingFunc)
+	require.Panics(t, panickingFunc)
 }
 
 func TestLedgerErrors(t *testing.T) {
@@ -441,11 +556,11 @@ func TestLedgerErrors(t *testing.T) {
 	// GetValidationParameterForKey returns an error
 
 	mr := &mockState{
-		GetStateMetadataErr:       fmt.Errorf("Ledger error"),
-		GetPrivateDataMetadataErr: fmt.Errorf("Ledger error"),
+		GetStateMetadataErr:             fmt.Errorf("Ledger error"),
+		GetPrivateDataMetadataByHashErr: fmt.Errorf("Ledger error"),
 	}
 	ms := &mockStateFetcher{FetchStateRv: mr, FetchStateErr: fmt.Errorf("Ledger error")}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc, coll, key := "cc", "", "key"
 
@@ -465,7 +580,7 @@ func TestLedgerErrors(t *testing.T) {
 		})
 
 	err := <-errC
-	assert.Errorf(t, err, "assert failure occurred with seed %d", seed)
+	require.Errorf(t, err, "assert failure occurred with seed %d", seed)
 
 	ms.FetchStateErr = nil
 
@@ -482,7 +597,7 @@ func TestLedgerErrors(t *testing.T) {
 		})
 
 	err = <-errC
-	assert.Error(t, err)
+	require.Error(t, err)
 
 	cc, coll, key = "cc", "coll", "key"
 
@@ -501,8 +616,8 @@ func TestLedgerErrors(t *testing.T) {
 		})
 
 	err = <-errC
-	assert.Errorf(t, err, "assert failure occurred with seed %d", seed)
-	assert.True(t, mr.DoneCalled, "assert failure occurred with seed %d", seed)
+	require.Errorf(t, err, "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
 }
 
 func TestBadRwsetIsNoDependency(t *testing.T) {
@@ -514,10 +629,10 @@ func TestBadRwsetIsNoDependency(t *testing.T) {
 	// that our code doesn't break
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc, coll, key := "cc", "", "key"
 
@@ -538,9 +653,9 @@ func TestBadRwsetIsNoDependency(t *testing.T) {
 
 	sp := <-resC
 	err := <-errC
-	assert.NoError(t, err, "assert failure occurred with seed %d", seed)
-	assert.Equal(t, utils.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
-	assert.True(t, mr.DoneCalled, "assert failure occurred with seed %d", seed)
+	require.NoError(t, err, "assert failure occurred with seed %d", seed)
+	require.Equal(t, protoutil.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
 }
 
 func TestWritesIntoDifferentNamespaces(t *testing.T) {
@@ -552,10 +667,10 @@ func TestWritesIntoDifferentNamespaces(t *testing.T) {
 	// parameters for cc. This does not constitute a dependency
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc, othercc, coll, key := "cc1", "cc", "", "key"
 
@@ -576,9 +691,9 @@ func TestWritesIntoDifferentNamespaces(t *testing.T) {
 
 	sp := <-resC
 	err := <-errC
-	assert.NoError(t, err, "assert failure occurred with seed %d", seed)
-	assert.Equal(t, utils.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
-	assert.True(t, mr.DoneCalled, "assert failure occurred with seed %d", seed)
+	require.NoError(t, err, "assert failure occurred with seed %d", seed)
+	require.Equal(t, protoutil.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
 }
 
 func TestCombinedCalls(t *testing.T) {
@@ -589,10 +704,10 @@ func TestCombinedCalls(t *testing.T) {
 	// for different keys - one succeeds and one fails.
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc := "cc"
 	coll := ""
@@ -629,16 +744,16 @@ func TestCombinedCalls(t *testing.T) {
 
 	sp := <-res1C
 	err := <-err1C
-	assert.NoError(t, err, "assert failure occurred with seed %d", seed)
-	assert.Equal(t, utils.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
+	require.NoError(t, err, "assert failure occurred with seed %d", seed)
+	require.Equal(t, protoutil.MarshalOrPanic(spe), sp, "assert failure occurred with seed %d", seed)
 
 	sp = <-res2C
 	err = <-err2C
-	assert.Errorf(t, err, "assert failure occurred with seed %d", seed)
-	assert.IsType(t, &ValidationParameterUpdatedError{}, err, "assert failure occurred with seed %d", seed)
-	assert.Nil(t, sp, "assert failure occurred with seed %d", seed)
+	require.Errorf(t, err, "assert failure occurred with seed %d", seed)
+	require.IsType(t, &ValidationParameterUpdatedError{}, err, "assert failure occurred with seed %d", seed)
+	require.Nil(t, sp, "assert failure occurred with seed %d", seed)
 
-	assert.True(t, mr.DoneCalled, "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
 }
 
 func TestForRaces(t *testing.T) {
@@ -646,13 +761,13 @@ func TestForRaces(t *testing.T) {
 
 	// scenario to stress test the parallel validation
 	// this is an extended combined test
-	// run with go test -race and GOMAXPROCS >> 1
+	// run with go test -race
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	spe := cauthdsl.SignedByMspMember("foo")
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: utils.MarshalOrPanic(spe)}}
+	spe := policydsl.SignedByMspMember("foo")
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: protoutil.MarshalOrPanic(spe)}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 
 	cc := "cc"
 	coll := ""
@@ -674,12 +789,12 @@ func TestForRaces(t *testing.T) {
 			runtime.Gosched()
 
 			sp, err := pm.GetValidationParameterForKey(cc, coll, key, 1, 2)
-			assert.Equal(t, utils.MarshalOrPanic(spe), sp)
-			assert.NoError(t, err)
+			require.Equal(t, protoutil.MarshalOrPanic(spe), sp)
+			require.NoError(t, err)
 		}
 	}
 
 	runFunctions(t, seed, funcArray...)
 
-	assert.True(t, mr.DoneCalled, "assert failure occurred with seed %d", seed)
+	require.True(t, ms.DoneCalled(), "assert failure occurred with seed %d", seed)
 }

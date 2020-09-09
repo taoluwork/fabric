@@ -7,14 +7,15 @@ SPDX-License-Identifier: Apache-2.0
 package multichannel
 
 import (
-	"github.com/hyperledger/fabric/common/crypto"
+	cb "github.com/hyperledger/fabric-protos-go/common"
+	"github.com/hyperledger/fabric/bccsp"
 	"github.com/hyperledger/fabric/common/ledger/blockledger"
+	"github.com/hyperledger/fabric/internal/pkg/identity"
 	"github.com/hyperledger/fabric/orderer/common/blockcutter"
 	"github.com/hyperledger/fabric/orderer/common/msgprocessor"
+	"github.com/hyperledger/fabric/orderer/common/types"
 	"github.com/hyperledger/fabric/orderer/consensus"
-	cb "github.com/hyperledger/fabric/protos/common"
-	"github.com/hyperledger/fabric/protos/utils"
-
+	"github.com/hyperledger/fabric/protoutil"
 	"github.com/pkg/errors"
 )
 
@@ -25,34 +26,51 @@ type ChainSupport struct {
 	*BlockWriter
 	consensus.Chain
 	cutter blockcutter.Receiver
-	crypto.LocalSigner
+	identity.SignerSerializer
+	BCCSP bccsp.BCCSP
+
+	// NOTE: It makes sense to add this to the ChainSupport since the design of Registrar does not assume
+	// that there is a single consensus type at this orderer node and therefore the resolution of
+	// the consensus type too happens only at the ChainSupport level.
+	consensus.MetadataValidator
+
+	// The registrar is not aware of the exact type that the Chain is, e.g. etcdraft, inactive, or follower.
+	// Therefore, we let each chain report its cluster relation and status through this interface. Non cluster
+	// type chains (solo, kafka) are assigned a static reporter.
+	consensus.StatusReporter
 }
 
 func newChainSupport(
 	registrar *Registrar,
 	ledgerResources *ledgerResources,
 	consenters map[string]consensus.Consenter,
-	signer crypto.LocalSigner,
-) *ChainSupport {
+	signer identity.SignerSerializer,
+	blockcutterMetrics *blockcutter.Metrics,
+	bccsp bccsp.BCCSP,
+) (*ChainSupport, error) {
 	// Read in the last block and metadata for the channel
 	lastBlock := blockledger.GetBlock(ledgerResources, ledgerResources.Height()-1)
-
-	metadata, err := utils.GetMetadataFromBlock(lastBlock, cb.BlockMetadataIndex_ORDERER)
+	metadata, err := protoutil.GetConsenterMetadataFromBlock(lastBlock)
 	// Assuming a block created with cb.NewBlock(), this should not
 	// error even if the orderer metadata is an empty byte slice
 	if err != nil {
-		logger.Fatalf("[channel: %s] Error extracting orderer metadata: %s", ledgerResources.ConfigtxValidator().ChainID(), err)
+		return nil, errors.Wrapf(err, "error extracting orderer metadata for channel: %s", ledgerResources.ConfigtxValidator().ChannelID())
 	}
 
 	// Construct limited support needed as a parameter for additional support
 	cs := &ChainSupport{
-		ledgerResources: ledgerResources,
-		LocalSigner:     signer,
-		cutter:          blockcutter.NewReceiverImpl(ledgerResources),
+		ledgerResources:  ledgerResources,
+		SignerSerializer: signer,
+		cutter: blockcutter.NewReceiverImpl(
+			ledgerResources.ConfigtxValidator().ChannelID(),
+			ledgerResources,
+			blockcutterMetrics,
+		),
+		BCCSP: bccsp,
 	}
 
 	// Set up the msgprocessor
-	cs.Processor = msgprocessor.NewStandardChannel(cs, msgprocessor.CreateStandardChannelFilters(cs))
+	cs.Processor = msgprocessor.NewStandardChannel(cs, msgprocessor.CreateStandardChannelFilters(cs, registrar.config), bccsp)
 
 	// Set up the block writer
 	cs.BlockWriter = newBlockWriter(lastBlock, registrar, cs)
@@ -61,25 +79,35 @@ func newChainSupport(
 	consenterType := ledgerResources.SharedConfig().ConsensusType()
 	consenter, ok := consenters[consenterType]
 	if !ok {
-		logger.Panicf("Error retrieving consenter of type: %s", consenterType)
+		return nil, errors.Errorf("error retrieving consenter of type: %s", consenterType)
 	}
 
 	cs.Chain, err = consenter.HandleChain(cs, metadata)
 	if err != nil {
-		logger.Panicf("[channel: %s] Error creating consenter: %s", cs.ChainID(), err)
+		return nil, errors.Wrapf(err, "error creating consenter for channel: %s", cs.ChannelID())
 	}
 
-	logger.Debugf("[channel: %s] Done creating channel support resources", cs.ChainID())
+	cs.MetadataValidator, ok = cs.Chain.(consensus.MetadataValidator)
+	if !ok {
+		cs.MetadataValidator = consensus.NoOpMetadataValidator{}
+	}
 
-	return cs
+	cs.StatusReporter, ok = cs.Chain.(consensus.StatusReporter)
+	if !ok { // Non-cluster types: solo, kafka
+		cs.StatusReporter = consensus.StaticStatusReporter{ClusterRelation: types.ClusterRelationNone, Status: types.StatusActive}
+	}
+
+	logger.Debugf("[channel: %s] Done creating channel support resources", cs.ChannelID())
+
+	return cs, nil
 }
 
 func (cs *ChainSupport) Reader() blockledger.Reader {
 	return cs
 }
 
-// Signer returns the crypto.Localsigner for this channel.
-func (cs *ChainSupport) Signer() crypto.LocalSigner {
+// Signer returns the SignerSerializer for this channel.
+func (cs *ChainSupport) Signer() identity.SignerSerializer {
 	return cs
 }
 
@@ -97,14 +125,15 @@ func (cs *ChainSupport) Validate(configEnv *cb.ConfigEnvelope) error {
 	return cs.ConfigtxValidator().Validate(configEnv)
 }
 
-// ProposeConfigUpdate passes through to the underlying configtx.Validator
+// ProposeConfigUpdate validates a config update using the underlying configtx.Validator
+// and the consensus.MetadataValidator.
 func (cs *ChainSupport) ProposeConfigUpdate(configtx *cb.Envelope) (*cb.ConfigEnvelope, error) {
 	env, err := cs.ConfigtxValidator().ProposeConfigUpdate(configtx)
 	if err != nil {
 		return nil, err
 	}
 
-	bundle, err := cs.CreateBundle(cs.ChainID(), env.Config)
+	bundle, err := cs.CreateBundle(cs.ChannelID(), env.Config)
 	if err != nil {
 		return nil, err
 	}
@@ -113,12 +142,27 @@ func (cs *ChainSupport) ProposeConfigUpdate(configtx *cb.Envelope) (*cb.ConfigEn
 		return nil, errors.Wrap(err, "config update is not compatible")
 	}
 
-	return env, cs.ValidateNew(bundle)
-}
+	if err = cs.ValidateNew(bundle); err != nil {
+		return nil, err
+	}
 
-// ChainID passes through to the underlying configtx.Validator
-func (cs *ChainSupport) ChainID() string {
-	return cs.ConfigtxValidator().ChainID()
+	oldOrdererConfig, ok := cs.OrdererConfig()
+	if !ok {
+		logger.Panic("old config is missing orderer group")
+	}
+	oldMetadata := oldOrdererConfig.ConsensusMetadata()
+
+	// we can remove this check since this is being validated in checkResources earlier
+	newOrdererConfig, ok := bundle.OrdererConfig()
+	if !ok {
+		return nil, errors.New("new config is missing orderer group")
+	}
+	newMetadata := newOrdererConfig.ConsensusMetadata()
+
+	if err = cs.ValidateConsensusMetadata(oldMetadata, newMetadata, false); err != nil {
+		return nil, errors.Wrap(err, "consensus metadata update for channel config update is invalid")
+	}
+	return env, nil
 }
 
 // ConfigProto passes through to the underlying configtx.Validator
@@ -129,4 +173,10 @@ func (cs *ChainSupport) ConfigProto() *cb.Config {
 // Sequence passes through to the underlying configtx.Validator
 func (cs *ChainSupport) Sequence() uint64 {
 	return cs.ConfigtxValidator().Sequence()
+}
+
+// Append appends a new block to the ledger in its raw form,
+// unlike WriteBlock that also mutates its metadata.
+func (cs *ChainSupport) Append(block *cb.Block) error {
+	return cs.ledgerResources.ReadWriter.Append(block)
 }

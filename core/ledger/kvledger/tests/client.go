@@ -10,11 +10,13 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
+	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/common/util"
 	"github.com/hyperledger/fabric/core/common/ccprovider"
 	"github.com/hyperledger/fabric/core/common/privdata"
 	"github.com/hyperledger/fabric/core/ledger"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/fabric/protoutil"
+	"github.com/stretchr/testify/require"
 )
 
 // client helps in a transction simulation. The client keeps accumlating the results of each simulated transaction
@@ -22,12 +24,14 @@ import (
 // In a test, for each instantiated ledger, a single instance of a client is typically sufficient.
 type client struct {
 	lgr            ledger.PeerLedger
+	lgrID          string
 	simulatedTrans []*txAndPvtdata // accumulates the results of transactions simulations
-	assert         *assert.Assertions
+	missingPvtData ledger.TxMissingPvtData
+	assert         *require.Assertions
 }
 
-func newClient(lgr ledger.PeerLedger, t *testing.T) *client {
-	return &client{lgr, nil, assert.New(t)}
+func newClient(lgr ledger.PeerLedger, lgrID string, t *testing.T) *client {
+	return &client{lgr, lgrID, nil, make(ledger.TxMissingPvtData), require.New(t)}
 }
 
 // simulateDataTx takes a simulation logic and wraps it between
@@ -47,8 +51,29 @@ func (c *client) simulateDataTx(txid string, simulationLogic func(s *simulator))
 	return txAndPvtdata
 }
 
+func (c *client) addPostOrderTx(txid string, customTxType common.HeaderType) *txAndPvtdata {
+	if txid == "" {
+		txid = util.GenerateUUID()
+	}
+	channelHeader := protoutil.MakeChannelHeader(customTxType, 0, c.lgrID, 0)
+	channelHeader.TxId = txid
+	paylBytes := protoutil.MarshalOrPanic(
+		&common.Payload{
+			Header: protoutil.MakePayloadHeader(channelHeader, &common.SignatureHeader{}),
+			Data:   nil,
+		},
+	)
+	env := &common.Envelope{
+		Payload:   paylBytes,
+		Signature: nil,
+	}
+	txAndPvtdata := &txAndPvtdata{Txid: txid, Envelope: env}
+	c.simulatedTrans = append(c.simulatedTrans, txAndPvtdata)
+	return txAndPvtdata
+}
+
 // simulateDeployTx mimics a transction that deploys a chaincode. This in turn calls the function 'simulateDataTx'
-// with supplying the simulation logic that mimics the inoke funciton of 'lscc' for the ledger tests
+// with supplying the simulation logic that mimics the invoke function of 'lscc' for the ledger tests
 func (c *client) simulateDeployTx(ccName string, collConfs []*collConf) *txAndPvtdata {
 	ccData := &ccprovider.ChaincodeData{Name: ccName}
 	ccDataBytes, err := proto.Marshal(ccData)
@@ -70,11 +95,49 @@ func (c *client) simulateUpgradeTx(ccName string, collConfs []*collConf) *txAndP
 	return c.simulateDeployTx(ccName, collConfs)
 }
 
+func (c *client) causeMissingPvtData(txIndex uint64) {
+	pvtws := c.simulatedTrans[txIndex].Pvtws
+	for _, nsPvtRwset := range pvtws.NsPvtRwset {
+		for _, collPvtRwset := range nsPvtRwset.CollectionPvtRwset {
+			c.missingPvtData.Add(txIndex, nsPvtRwset.Namespace, collPvtRwset.CollectionName, true)
+		}
+	}
+	c.simulatedTrans[txIndex].Pvtws = nil
+}
+
+func (c *client) retrieveCommittedBlocksAndPvtdata(startNum, endNum uint64) []*ledger.BlockAndPvtData {
+	data := []*ledger.BlockAndPvtData{}
+	for i := startNum; i <= endNum; i++ {
+		d, err := c.lgr.GetPvtDataAndBlockByNum(i, nil)
+		c.assert.NoError(err)
+		data = append(data, d)
+	}
+	return data
+}
+
+func (c *client) currentHeight() uint64 {
+	bcInfo, err := c.lgr.GetBlockchainInfo()
+	c.assert.NoError(err)
+	return bcInfo.Height
+}
+
+func (c *client) currentCommitHash() []byte {
+	block, err := c.lgr.GetBlockByNumber(c.currentHeight() - 1)
+	c.assert.NoError(err)
+	if len(block.Metadata.Metadata) < int(common.BlockMetadataIndex_COMMIT_HASH+1) {
+		return nil
+	}
+	commitHash := &common.Metadata{}
+	err = proto.Unmarshal(block.Metadata.Metadata[common.BlockMetadataIndex_COMMIT_HASH], commitHash)
+	c.assert.NoError(err)
+	return commitHash.Value
+}
+
 ///////////////////////   simulator wrapper functions  ///////////////////////
 type simulator struct {
 	ledger.TxSimulator
 	txid   string
-	assert *assert.Assertions
+	assert *require.Assertions
 }
 
 func (s *simulator) getState(ns, key string) string {
@@ -89,26 +152,9 @@ func (s *simulator) setState(ns, key string, val string) {
 	)
 }
 
-func (s *simulator) delState(ns, key string) {
-	s.assert.NoError(
-		s.DeleteState(ns, key),
-	)
-}
-
-func (s *simulator) getPvtdata(ns, coll, key string) {
-	_, err := s.GetPrivateData(ns, coll, key)
-	s.assert.NoError(err)
-}
-
 func (s *simulator) setPvtdata(ns, coll, key string, val string) {
 	s.assert.NoError(
 		s.SetPrivateData(ns, coll, key, []byte(val)),
-	)
-}
-
-func (s *simulator) delPvtdata(ns, coll, key string) {
-	s.assert.NoError(
-		s.DeletePrivateData(ns, coll, key),
 	)
 }
 

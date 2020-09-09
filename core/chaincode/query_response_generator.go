@@ -8,13 +8,12 @@ package chaincode
 
 import (
 	"github.com/golang/protobuf/proto"
+	pb "github.com/hyperledger/fabric-protos-go/peer"
 	commonledger "github.com/hyperledger/fabric/common/ledger"
-	pb "github.com/hyperledger/fabric/protos/peer"
 )
 
 type QueryResponseGenerator struct {
-	MaxResultLimit  int
-	TotalQueryLimit int
+	MaxResultLimit int
 }
 
 // BuildQueryResponse takes an iterator and fetch state to construct QueryResponse

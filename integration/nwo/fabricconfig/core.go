@@ -13,16 +13,16 @@ import (
 )
 
 type Core struct {
-	Logging   *Logging   `yaml:"logging,omitempty"`
-	Peer      *Peer      `yaml:"peer,omitempty"`
-	VM        *VM        `yaml:"vm,omitempty"`
-	Chaincode *Chaincode `yaml:"chaincode,omitempty"`
-	Ledger    *Ledger    `yaml:"ledger,omitempty"`
-	Metrics   *Metrics   `yaml:"metrics,omitempty"`
+	Logging    *Logging    `yaml:"logging,omitempty"`
+	Peer       *Peer       `yaml:"peer,omitempty"`
+	VM         *VM         `yaml:"vm,omitempty"`
+	Chaincode  *Chaincode  `yaml:"chaincode,omitempty"`
+	Ledger     *Ledger     `yaml:"ledger,omitempty"`
+	Operations *Operations `yaml:"operations,omitempty"`
+	Metrics    *Metrics    `yaml:"metrics,omitempty"`
 }
 
 type Logging struct {
-	Level  string `yaml:"level,omitempty"`
 	Format string `yaml:"format,omitempty"`
 
 	ExtraProperties map[string]interface{} `yaml:",inline,omitempty"`
@@ -32,7 +32,7 @@ type Peer struct {
 	ID                     string          `yaml:"id,omitempty"`
 	NetworkID              string          `yaml:"networkId,omitempty"`
 	ListenAddress          string          `yaml:"listenAddress,omitempty"`
-	ChaincodeListenAddress string          `yaml:"chaincodeListenAddress,omitempty"`
+	ChaincodeListenAddress string          `yaml:"ChaincodeListenAddress,omitempty"`
 	ChaincodeAddress       string          `yaml:"chaincodeAddress,omitempty"`
 	Address                string          `yaml:"address,omitempty"`
 	AddressAutoDetect      bool            `yaml:"addressAutoDetect"`
@@ -47,10 +47,10 @@ type Peer struct {
 	LocalMSPID             string          `yaml:"localMspId,omitempty"`
 	Deliveryclient         *DeliveryClient `yaml:"deliveryclient,omitempty"`
 	LocalMspType           string          `yaml:"localMspType,omitempty"`
-	AdminService           *Service        `yaml:"adminService,omitempty"`
 	Handlers               *Handlers       `yaml:"handlers,omitempty"`
 	ValidatorPoolSize      int             `yaml:"validatorPoolSize,omitempty"`
 	Discovery              *Discovery      `yaml:"discovery,omitempty"`
+	Limits                 *Limits         `yaml:"limits,omitempty"`
 
 	ExtraProperties map[string]interface{} `yaml:",inline,omitempty"`
 }
@@ -70,6 +70,7 @@ type Gossip struct {
 	Bootstrap                  string          `yaml:"bootstrap,omitempty"`
 	UseLeaderElection          bool            `yaml:"useLeaderElection"`
 	OrgLeader                  bool            `yaml:"orgLeader"`
+	MembershipTrackerInterval  time.Duration   `yaml:"membershipTrackerInterval,omitempty"`
 	Endpoint                   string          `yaml:"endpoint,omitempty"`
 	MaxBlockCountToStore       int             `yaml:"maxBlockCountToStore,omitempty"`
 	MaxPropagationBurstLatency time.Duration   `yaml:"maxPropagationBurstLatency,omitempty"`
@@ -92,9 +93,12 @@ type Gossip struct {
 	AliveTimeInterval          time.Duration   `yaml:"aliveTimeInterval,omitempty"`
 	AliveExpirationTimeout     time.Duration   `yaml:"aliveExpirationTimeout,omitempty"`
 	ReconnectInterval          time.Duration   `yaml:"reconnectInterval,omitempty"`
+	MsgExpirationFactor        int             `yaml:"msgExpirationFactor,omitempty"`
+	MaxConnectionAttempts      int             `yaml:"maxConnectionAttempts,omitempty"`
 	ExternalEndpoint           string          `yaml:"externalEndpoint,omitempty"`
 	Election                   *GossipElection `yaml:"election,omitempty"`
 	PvtData                    *GossipPvtData  `yaml:"pvtData,omitempty"`
+	State                      *GossipState    `yaml:"state,omitempty"`
 }
 
 type GossipElection struct {
@@ -105,9 +109,30 @@ type GossipElection struct {
 }
 
 type GossipPvtData struct {
-	PullRetryThreshold              time.Duration `yaml:"pullRetryThreshold,omitempty"`
-	TransientstoreMaxBlockRetention int           `yaml:"transientstoreMaxBlockRetention,omitempty"`
-	PushAckTimeout                  time.Duration `yaml:"pushAckTimeout,omitempty"`
+	PullRetryThreshold                         time.Duration                   `yaml:"pullRetryThreshold,omitempty"`
+	TransientstoreMaxBlockRetention            int                             `yaml:"transientstoreMaxBlockRetention,omitempty"`
+	PushAckTimeout                             time.Duration                   `yaml:"pushAckTimeout,omitempty"`
+	BtlPullMargin                              int                             `yaml:"btlPullMargin,omitempty"`
+	ReconcileBatchSize                         int                             `yaml:"reconcileBatchSize,omitempty"`
+	ReconcileSleepInterval                     time.Duration                   `yaml:"reconcileSleepInterval,omitempty"`
+	ReconciliationEnabled                      bool                            `yaml:"reconciliationEnabled"`
+	SkipPullingInvalidTransactionsDuringCommit bool                            `yaml:"skipPullingInvalidTransactionsDuringCommit"`
+	ImplicitCollDisseminationPolicy            ImplicitCollDisseminationPolicy `yaml:"implicitCollectionDisseminationPolicy"`
+}
+
+type ImplicitCollDisseminationPolicy struct {
+	RequiredPeerCount int `yaml:"requiredPeerCount,omitempty"`
+	// do not tag omitempty in order to override MaxPeerCount default with 0
+	MaxPeerCount int `yaml:"maxPeerCount"`
+}
+
+type GossipState struct {
+	Enabled         bool          `yaml:"enabled"`
+	CheckInterval   time.Duration `yaml:"checkInterval,omitempty"`
+	ResponseTimeout time.Duration `yaml:"responseTimeout,omitempty"`
+	BatchSize       int           `yaml:"batchSize,omitempty"`
+	BlockBufferSize int           `yaml:"blockBufferSize,omitempty"`
+	MaxRetries      int           `yaml:"maxRetries,omitempty"`
 }
 
 type Events struct {
@@ -145,6 +170,7 @@ type Authentication struct {
 type BCCSP struct {
 	Default string            `yaml:"Default,omitempty"`
 	SW      *SoftwareProvider `yaml:"SW,omitempty"`
+	PKCS11  *PKCS11           `yaml:"PKCS11,omitempty"`
 }
 
 type SoftwareProvider struct {
@@ -152,8 +178,23 @@ type SoftwareProvider struct {
 	Security int    `yaml:"Security,omitempty"`
 }
 
+type PKCS11 struct {
+	Hash     string `yaml:"Hash,omitempty"`
+	Security int    `yaml:"Security,omitempty"`
+	Pin      string `yaml:"Pin,omitempty"`
+	Label    string `yaml:"Label,omitempty"`
+	Library  string `yaml:"Library,omitempty"`
+}
+
 type DeliveryClient struct {
-	ReconnectTotalTimeThreshold time.Duration `yaml:"reconnectTotalTimeThreshold,omitempty"`
+	ReconnectTotalTimeThreshold time.Duration      `yaml:"reconnectTotalTimeThreshold,omitempty"`
+	AddressOverrides            []*AddressOverride `yaml:"addressOverrides,omitempty"`
+}
+
+type AddressOverride struct {
+	From        string `yaml:"from"`
+	To          string `yaml:"to"`
+	CACertsFile string `yaml:"caCertsFile"`
 }
 
 type Service struct {
@@ -183,6 +224,15 @@ type Discovery struct {
 	OrgMembersAllowedAccess      bool    `yaml:"orgMembersAllowedAccess"`
 }
 
+type Limits struct {
+	Concurrency *Concurrency `yaml:"concurrency,omitempty"`
+}
+
+type Concurrency struct {
+	EndorserService int `yaml:"endorserService,omitempty"`
+	DeliverService  int `yaml:"deliverService,omitempty"`
+}
+
 type VM struct {
 	Endpoint string  `yaml:"endpoint,omitempty"`
 	Docker   *Docker `yaml:"docker,omitempty"`
@@ -195,18 +245,19 @@ type Docker struct {
 }
 
 type Chaincode struct {
-	Builder        string        `yaml:"builder,omitempty"`
-	Pull           bool          `yaml:"pull"`
-	Golang         *Golang       `yaml:"golang,omitempty"`
-	Car            *Car          `yaml:"car,omitempty"`
-	Java           *Java         `yaml:"java,omitempty"`
-	Node           *Node         `yaml:"node,omitempty"`
-	StartupTimeout time.Duration `yaml:"startupTimeout,omitempty"`
-	ExecuteTimeout time.Duration `yaml:"executeTimeout,omitempty"`
-	Mode           string        `yaml:"mode,omitempty"`
-	Keepalive      int           `yaml:"keepalive,omitempty"`
-	System         SystemFlags   `yaml:"system,omitempty"`
-	Logging        *Logging      `yaml:"logging,omitempty"`
+	Builder          string            `yaml:"builder,omitempty"`
+	Pull             bool              `yaml:"pull"`
+	Golang           *Golang           `yaml:"golang,omitempty"`
+	Java             *Java             `yaml:"java,omitempty"`
+	Node             *Node             `yaml:"node,omitempty"`
+	InstallTimeout   time.Duration     `yaml:"installTimeout,omitempty"`
+	StartupTimeout   time.Duration     `yaml:"startupTimeout,omitempty"`
+	ExecuteTimeout   time.Duration     `yaml:"executeTimeout,omitempty"`
+	Mode             string            `yaml:"mode,omitempty"`
+	Keepalive        int               `yaml:"keepalive,omitempty"`
+	System           SystemFlags       `yaml:"system,omitempty"`
+	Logging          *Logging          `yaml:"logging,omitempty"`
+	ExternalBuilders []ExternalBuilder `yaml:"externalBuilders"`
 
 	ExtraProperties map[string]interface{} `yaml:",inline,omitempty"`
 }
@@ -218,10 +269,6 @@ type Golang struct {
 	ExtraProperties map[string]interface{} `yaml:",inline,omitempty"`
 }
 
-type Car struct {
-	ExtraProperties map[string]interface{} `yaml:",inline,omitempty"`
-}
-
 type Java struct {
 	ExtraProperties map[string]interface{} `yaml:",inline,omitempty"`
 }
@@ -230,12 +277,19 @@ type Node struct {
 	ExtraProperties map[string]interface{} `yaml:",inline,omitempty"`
 }
 
+type ExternalBuilder struct {
+	PropagateEnvironment []string `yaml:"propagateEnvironment,omitempty"`
+	Name                 string   `yaml:"name,omitempty"`
+	Path                 string   `yaml:"path,omitempty"`
+}
+
 type SystemFlags struct {
-	CSCC string `yaml:"cscc,omitempty"`
-	LSCC string `yaml:"lscc,omitempty"`
-	ESCC string `yaml:"escc,omitempty"`
-	VSCC string `yaml:"vscc,omitempty"`
-	QSCC string `yaml:"qscc,omitempty"`
+	NEWLIFECYCLE string `yaml:"_lifecycle,omitempty"`
+	CSCC         string `yaml:"cscc,omitempty"`
+	LSCC         string `yaml:"lscc,omitempty"`
+	ESCC         string `yaml:"escc,omitempty"`
+	VSCC         string `yaml:"vscc,omitempty"`
+	QSCC         string `yaml:"qscc,omitempty"`
 }
 
 type Ledger struct {
@@ -265,16 +319,19 @@ type HistoryConfig struct {
 	EnableHistoryDatabase bool `yaml:"enableHistoryDatabase"`
 }
 
-type Metrics struct {
-	Enabled        bool            `yaml:"enabled"`
-	Reporter       string          `yaml:"reporter,omitempty"`
-	Interval       time.Duration   `yaml:"interval,omitempty"`
-	StatsdReporter *StatsdReporter `yaml:"statsdReporter,omitempty"`
-	PromReporter   *Service        `yaml:"promReporter,omitempty"`
+type Operations struct {
+	ListenAddress string `yaml:"listenAddress,omitempty"`
+	TLS           *TLS   `yaml:"tls"`
 }
 
-type StatsdReporter struct {
+type Metrics struct {
+	Provider string  `yaml:"provider"`
+	Statsd   *Statsd `yaml:"statsd,omitempty"`
+}
+
+type Statsd struct {
+	Network       string        `yaml:"network,omitempty"`
 	Address       string        `yaml:"address,omitempty"`
-	FlushInterval time.Duration `yaml:"flushInterval,omitempty"`
-	FlushBytes    int           `yaml:"flushBytes,omitempty"`
+	WriteInterval time.Duration `yaml:"writeInterval,omitempty"`
+	Prefix        string        `yaml:"prefix,omitempty"`
 }

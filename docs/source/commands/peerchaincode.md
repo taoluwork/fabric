@@ -53,7 +53,7 @@ flags are
 
 * `-o` or `--orderer <string>`
 
-  Ordering service endpoint specifed as `<hostname or IP address>:<port>`
+  Ordering service endpoint specified as `<hostname or IP address>:<port>`
 
 * `--ordererTLSHostnameOverride <string>`
 
@@ -67,13 +67,9 @@ flags are
 
   Transient map of arguments in JSON encoding
 
-* `--logging-level <string>`
-
-  Default logging level and overrides, see `core.yaml` for full syntax
-
 ## peer chaincode install
 ```
-Package the specified chaincode into a deployment spec and save it on the peer's path.
+Install a chaincode on a peer. This installs a chaincode deployment spec package (if provided) or packages the specified chaincode before subsequently installing it.
 
 Usage:
   peer chaincode install [flags]
@@ -95,7 +91,6 @@ Global Flags:
       --clientauth                          Use mutual TLS when communicating with the orderer endpoint
       --connTimeout duration                Timeout for client to connect (default 3s)
       --keyfile string                      Path to file containing PEM-encoded private key to use for mutual TLS communication with the orderer endpoint
-      --logging-level string                Default logging level and overrides, see core.yaml for full syntax
   -o, --orderer string                      Ordering service endpoint
       --ordererTLSHostnameOverride string   The hostname override to use when validating the TLS connection to the orderer.
       --tls                                 Use TLS when communicating with the orderer endpoint
@@ -131,7 +126,6 @@ Global Flags:
       --clientauth                          Use mutual TLS when communicating with the orderer endpoint
       --connTimeout duration                Timeout for client to connect (default 3s)
       --keyfile string                      Path to file containing PEM-encoded private key to use for mutual TLS communication with the orderer endpoint
-      --logging-level string                Default logging level and overrides, see core.yaml for full syntax
   -o, --orderer string                      Ordering service endpoint
       --ordererTLSHostnameOverride string   The hostname override to use when validating the TLS connection to the orderer.
       --tls                                 Use TLS when communicating with the orderer endpoint
@@ -151,6 +145,7 @@ Flags:
       --connectionProfile string       Connection profile that provides the necessary connection information for the network. Note: currently only supported for providing peer connection information
   -c, --ctor string                    Constructor message for the chaincode in JSON format (default "{}")
   -h, --help                           help for invoke
+  -I, --isInit                         Is this invocation for init (useful for supporting legacy chaincodes in the new lifecycle)
   -n, --name string                    Name of the chaincode
       --peerAddresses stringArray      The addresses of the peers to connect to
       --tlsRootCertFiles stringArray   If TLS is enabled, the paths to the TLS root cert files of the peers to connect to. The order and number of certs specified should match the --peerAddresses flag
@@ -163,7 +158,6 @@ Global Flags:
       --clientauth                          Use mutual TLS when communicating with the orderer endpoint
       --connTimeout duration                Timeout for client to connect (default 3s)
       --keyfile string                      Path to file containing PEM-encoded private key to use for mutual TLS communication with the orderer endpoint
-      --logging-level string                Default logging level and overrides, see core.yaml for full syntax
   -o, --orderer string                      Ordering service endpoint
       --ordererTLSHostnameOverride string   The hostname override to use when validating the TLS connection to the orderer.
       --tls                                 Use TLS when communicating with the orderer endpoint
@@ -193,7 +187,6 @@ Global Flags:
       --clientauth                          Use mutual TLS when communicating with the orderer endpoint
       --connTimeout duration                Timeout for client to connect (default 3s)
       --keyfile string                      Path to file containing PEM-encoded private key to use for mutual TLS communication with the orderer endpoint
-      --logging-level string                Default logging level and overrides, see core.yaml for full syntax
   -o, --orderer string                      Ordering service endpoint
       --ordererTLSHostnameOverride string   The hostname override to use when validating the TLS connection to the orderer.
       --tls                                 Use TLS when communicating with the orderer endpoint
@@ -203,10 +196,10 @@ Global Flags:
 
 ## peer chaincode package
 ```
-Package the specified chaincode into a deployment spec.
+Package a chaincode and write the package to a file.
 
 Usage:
-  peer chaincode package [flags]
+  peer chaincode package [outputfile] [flags]
 
 Flags:
   -s, --cc-package                  create CC deployment spec for owner endorsements instead of raw CC deployment spec
@@ -225,7 +218,6 @@ Global Flags:
       --clientauth                          Use mutual TLS when communicating with the orderer endpoint
       --connTimeout duration                Timeout for client to connect (default 3s)
       --keyfile string                      Path to file containing PEM-encoded private key to use for mutual TLS communication with the orderer endpoint
-      --logging-level string                Default logging level and overrides, see core.yaml for full syntax
   -o, --orderer string                      Ordering service endpoint
       --ordererTLSHostnameOverride string   The hostname override to use when validating the TLS connection to the orderer.
       --tls                                 Use TLS when communicating with the orderer endpoint
@@ -257,7 +249,6 @@ Global Flags:
       --clientauth                          Use mutual TLS when communicating with the orderer endpoint
       --connTimeout duration                Timeout for client to connect (default 3s)
       --keyfile string                      Path to file containing PEM-encoded private key to use for mutual TLS communication with the orderer endpoint
-      --logging-level string                Default logging level and overrides, see core.yaml for full syntax
   -o, --orderer string                      Ordering service endpoint
       --ordererTLSHostnameOverride string   The hostname override to use when validating the TLS connection to the orderer.
       --tls                                 Use TLS when communicating with the orderer endpoint
@@ -281,7 +272,6 @@ Global Flags:
       --clientauth                          Use mutual TLS when communicating with the orderer endpoint
       --connTimeout duration                Timeout for client to connect (default 3s)
       --keyfile string                      Path to file containing PEM-encoded private key to use for mutual TLS communication with the orderer endpoint
-      --logging-level string                Default logging level and overrides, see core.yaml for full syntax
   -o, --orderer string                      Ordering service endpoint
       --ordererTLSHostnameOverride string   The hostname override to use when validating the TLS connection to the orderer.
       --tls                                 Use TLS when communicating with the orderer endpoint
@@ -318,7 +308,6 @@ Global Flags:
       --clientauth                          Use mutual TLS when communicating with the orderer endpoint
       --connTimeout duration                Timeout for client to connect (default 3s)
       --keyfile string                      Path to file containing PEM-encoded private key to use for mutual TLS communication with the orderer endpoint
-      --logging-level string                Default logging level and overrides, see core.yaml for full syntax
   -o, --orderer string                      Ordering service endpoint
       --ordererTLSHostnameOverride string   The hostname override to use when validating the TLS connection to the orderer.
       --tls                                 Use TLS when communicating with the orderer endpoint
@@ -363,12 +352,12 @@ instantiates the chaincode named `mycc` at version `1.0` on channel
 Here is an example of the `peer chaincode invoke` command:
 
   * Invoke the chaincode named `mycc` at version `1.0` on channel `mychannel`
-    on `peer0.org1.example.com:7051` and `peer0.org2.example.com:7051` (the
+    on `peer0.org1.example.com:7051` and `peer0.org2.example.com:9051` (the
     peers defined by `--peerAddresses`), requesting to move 10 units from
     variable `a` to variable `b`:
 
     ```
-    peer chaincode invoke -o orderer.example.com:7050 -C mychannel -n mycc --peerAddresses peer0.org1.example.com:7051 --peerAddresses peer0.org2.example.com:7051 -c '{"Args":["invoke","a","b","10"]}'
+    peer chaincode invoke -o orderer.example.com:7050 -C mychannel -n mycc --peerAddresses peer0.org1.example.com:7051 --peerAddresses peer0.org2.example.com:9051 -c '{"Args":["invoke","a","b","10"]}'
 
     2018-02-22 16:34:27.069 UTC [chaincodeCmd] checkChaincodeCmdParams -> INFO 001 Using default escc
     2018-02-22 16:34:27.069 UTC [chaincodeCmd] checkChaincodeCmdParams -> INFO 002 Using default vscc
@@ -393,6 +382,18 @@ Here is an example of the `peer chaincode invoke` command:
     successfully. The transaction will then be added to a block and, finally, validated
     or invalidated by each peer on the channel.
 
+Here is an example of how to format the `peer chaincode invoke` command when the chaincode package includes multiple smart contracts.
+
+  * If you are using the [contract-api](https://www.npmjs.com/package/fabric-contract-api), the name you pass to `super("MyContract")` can be used as a prefix.
+
+    ```
+    peer chaincode invoke -C $CHANNEL_NAME -n $CHAINCODE_NAME -c '{ "Args": ["MyContract:methodName", "{}"] }'
+
+    peer chaincode invoke -C $CHANNEL_NAME -n $CHAINCODE_NAME -c '{ "Args": ["MyOtherContract:methodName", "{}"] }'
+
+    ```
+
+
 ### peer chaincode list example
 
 Here are some examples of the `peer chaincode list ` command:
@@ -403,7 +404,7 @@ Here are some examples of the `peer chaincode list ` command:
     peer chaincode list --installed
 
     Get installed chaincodes on peer:
-    Name: mycc, Version: 1.0, Path: github.com/hyperledger/fabric/examples/chaincode/go/chaincode_example02, Id: 8cc2730fdafd0b28ef734eac12b29df5fc98ad98bdb1b7e0ef96265c3d893d61
+    Name: mycc, Version: 1.0, Path: github.com/hyperledger/fabric-samples/chaincode/abstore/go, Id: 8cc2730fdafd0b28ef734eac12b29df5fc98ad98bdb1b7e0ef96265c3d893d61
     2018-02-22 17:07:13.476 UTC [main] main -> INFO 001 Exiting.....
     ```
 
@@ -417,7 +418,7 @@ Here are some examples of the `peer chaincode list ` command:
     peer chaincode list --instantiated -C mychannel
 
     Get instantiated chaincodes on channel mychannel:
-    Name: mycc, Version: 1.0, Path: github.com/hyperledger/fabric/examples/chaincode/go/chaincode_example02, Escc: escc, Vscc: vscc
+    Name: mycc, Version: 1.0, Path: github.com/hyperledger/fabric-samples/chaincode/abstore/go, Escc: escc, Vscc: vscc
     2018-02-22 17:07:42.969 UTC [main] main -> INFO 001 Exiting.....
 
     ```
@@ -433,7 +434,7 @@ deployment spec, signs the package using the local MSP, and outputs it as
 `ccpack.out`:
 
   ```
-    peer chaincode package ccpack.out -n mycc -p github.com/hyperledger/fabric/examples/chaincode/go/chaincode_example02 -v 1.1 -s -S
+    peer chaincode package ccpack.out -n mycc -p github.com/hyperledger/fabric-samples/chaincode/abstore/go -v 1.1 -s -S
     .
     .
     .
@@ -480,8 +481,8 @@ appended to it.
 ### peer chaincode upgrade example
 
 Here is an example of the `peer chaincode upgrade` command, which
-upgrades the chaincode named `mycc` at version `1.0` on channel
-`mychannel` to version `1.1`, which contains a new variable `c`:
+upgrades the chaincode named `mycc` at version `1.1` on channel
+`mychannel` to version `1.2`, which contains a new variable `c`:
 
   * Using the `--tls` and `--cafile` global flags to upgrade the chaincode
     in a network with TLS enabled:

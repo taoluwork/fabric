@@ -12,12 +12,12 @@ import (
 	"github.com/hyperledger/fabric/gossip/comm"
 	"github.com/hyperledger/fabric/gossip/common"
 	"github.com/hyperledger/fabric/gossip/discovery"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestSelectPolicies(t *testing.T) {
-	assert.True(t, SelectAllPolicy(discovery.NetworkMember{}))
-	assert.False(t, SelectNonePolicy(discovery.NetworkMember{}))
+	require.True(t, SelectAllPolicy(discovery.NetworkMember{}))
+	require.False(t, SelectNonePolicy(discovery.NetworkMember{}))
 }
 
 func TestCombineRoutingFilters(t *testing.T) {
@@ -32,9 +32,9 @@ func TestCombineRoutingFilters(t *testing.T) {
 	b := func(nm discovery.NetworkMember) bool {
 		return nm.InternalEndpoint == "b"
 	}
-	assert.True(t, CombineRoutingFilters(a, b)(nm))
-	assert.False(t, CombineRoutingFilters(CombineRoutingFilters(a, b), SelectNonePolicy)(nm))
-	assert.False(t, CombineRoutingFilters(a, b)(discovery.NetworkMember{InternalEndpoint: "b"}))
+	require.True(t, CombineRoutingFilters(a, b)(nm))
+	require.False(t, CombineRoutingFilters(CombineRoutingFilters(a, b), SelectNonePolicy)(nm))
+	require.False(t, CombineRoutingFilters(a, b)(discovery.NetworkMember{InternalEndpoint: "b"}))
 }
 
 func TestAnyMatch(t *testing.T) {
@@ -53,29 +53,29 @@ func TestAnyMatch(t *testing.T) {
 	}
 
 	matched := AnyMatch(peers, matchB, matchC)
-	assert.Len(t, matched, 2)
-	assert.Contains(t, matched, peerB)
-	assert.Contains(t, matched, peerC)
+	require.Len(t, matched, 2)
+	require.Contains(t, matched, peerB)
+	require.Contains(t, matched, peerC)
 }
 
 func TestFirst(t *testing.T) {
+	var peers []discovery.NetworkMember
+	// nil slice
+	require.Nil(t, First(nil, SelectAllPolicy))
+
+	// empty slice
+	peers = []discovery.NetworkMember{}
+	require.Nil(t, First(peers, SelectAllPolicy))
+
+	// first in slice with any marcher
 	peerA := discovery.NetworkMember{Endpoint: "a"}
 	peerB := discovery.NetworkMember{Endpoint: "b"}
-	peers := []discovery.NetworkMember{peerA, peerB}
-	assert.Equal(t, &comm.RemotePeer{Endpoint: "a"}, First(peers, func(discovery.NetworkMember) bool {
-		return true
-	}))
+	peers = []discovery.NetworkMember{peerA, peerB}
+	require.Equal(t, &comm.RemotePeer{Endpoint: "a"}, First(peers, SelectAllPolicy))
 
-	assert.Equal(t, &comm.RemotePeer{Endpoint: "b"}, First(peers, func(nm discovery.NetworkMember) bool {
+	// second in slice with matcher that checks for a specific peer
+	require.Equal(t, &comm.RemotePeer{Endpoint: "b"}, First(peers, func(nm discovery.NetworkMember) bool {
 		return nm.PreferredEndpoint() == "b"
-	}))
-
-	peerAA := discovery.NetworkMember{Endpoint: "aa"}
-	peerAB := discovery.NetworkMember{Endpoint: "ab"}
-	peers = append(peers, peerAA)
-	peers = append(peers, peerAB)
-	assert.Equal(t, &comm.RemotePeer{Endpoint: "aa"}, First(peers, func(nm discovery.NetworkMember) bool {
-		return len(nm.PreferredEndpoint()) > 1
 	}))
 }
 
@@ -101,7 +101,55 @@ func TestSelectPeers(t *testing.T) {
 		InternalEndpoint: "b",
 		PKIid:            common.PKIidType("c"),
 	}
-	assert.Len(t, SelectPeers(3, []discovery.NetworkMember{nm1, nm2, nm3}, CombineRoutingFilters(a, b)), 2)
-	assert.Len(t, SelectPeers(5, []discovery.NetworkMember{nm1, nm2, nm3}, CombineRoutingFilters(a, b)), 2)
-	assert.Len(t, SelectPeers(1, []discovery.NetworkMember{nm1, nm2, nm3}, CombineRoutingFilters(a, b)), 1)
+
+	// individual filters
+	require.Len(t, SelectPeers(3, []discovery.NetworkMember{nm1, nm2, nm3}, a), 2)
+	require.Len(t, SelectPeers(3, []discovery.NetworkMember{nm1, nm2, nm3}, b), 3)
+	// combined filters
+	crf := CombineRoutingFilters(a, b)
+	require.Len(t, SelectPeers(3, []discovery.NetworkMember{nm1, nm2, nm3}, crf), 2)
+	require.Len(t, SelectPeers(1, []discovery.NetworkMember{nm1, nm2, nm3}, crf), 1)
+}
+
+func BenchmarkSelectPeers(t *testing.B) {
+	a := func(nm discovery.NetworkMember) bool {
+		return nm.Endpoint == "a"
+	}
+	b := func(nm discovery.NetworkMember) bool {
+		return nm.InternalEndpoint == "b"
+	}
+	nm1 := discovery.NetworkMember{
+		Endpoint:         "a",
+		InternalEndpoint: "b",
+		PKIid:            common.PKIidType("a"),
+	}
+	nm2 := discovery.NetworkMember{
+		Endpoint:         "a",
+		InternalEndpoint: "b",
+		PKIid:            common.PKIidType("b"),
+	}
+	nm3 := discovery.NetworkMember{
+		Endpoint:         "d",
+		InternalEndpoint: "b",
+		PKIid:            common.PKIidType("c"),
+	}
+	crf := CombineRoutingFilters(a, b)
+
+	var l1, l2, l3, l4 int
+
+	t.ResetTimer()
+	for i := 0; i < t.N; i++ {
+		// individual filters
+		l1 = len(SelectPeers(3, []discovery.NetworkMember{nm1, nm2, nm3}, a))
+		l2 = len(SelectPeers(3, []discovery.NetworkMember{nm1, nm2, nm3}, b))
+		// combined filters
+		l3 = len(SelectPeers(3, []discovery.NetworkMember{nm1, nm2, nm3}, crf))
+		l4 = len(SelectPeers(1, []discovery.NetworkMember{nm1, nm2, nm3}, crf))
+	}
+	t.StopTimer()
+
+	require.Equal(t, l1, 2)
+	require.Equal(t, l2, 3)
+	require.Equal(t, l3, 2)
+	require.Equal(t, l4, 1)
 }

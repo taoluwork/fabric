@@ -23,7 +23,7 @@ import (
 
 	mocks2 "github.com/hyperledger/fabric/bccsp/mocks"
 	"github.com/hyperledger/fabric/bccsp/sw/mocks"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestEncrypt(t *testing.T) {
@@ -44,9 +44,9 @@ func TestEncrypt(t *testing.T) {
 		EncErr:       expectedErr,
 	}
 
-	csp := CSP{encryptors: encryptors}
+	csp := CSP{Encryptors: encryptors}
 
 	ct, err := csp.Encrypt(expectedKey, expectedPlaintext, expectedOpts)
-	assert.Equal(t, expectedCiphertext, ct)
-	assert.Equal(t, expectedErr, err)
+	require.Equal(t, expectedCiphertext, ct)
+	require.Equal(t, expectedErr, err)
 }

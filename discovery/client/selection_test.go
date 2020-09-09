@@ -10,12 +10,13 @@ import (
 	"testing"
 
 	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger/fabric/protos/gossip"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/fabric-protos-go/gossip"
+	"github.com/hyperledger/fabric/gossip/protoext"
+	"github.com/stretchr/testify/require"
 )
 
 func TestShuffle(t *testing.T) {
-	endorsers := make(Endorsers, 1000000)
+	endorsers := make(Endorsers, 1000)
 	for i := 0; i < len(endorsers); i++ {
 		endorsers[i] = &Peer{
 			StateInfoMessage: stateInfoWithHeight(uint64(i)),
@@ -33,14 +34,14 @@ func TestShuffle(t *testing.T) {
 		return true
 	}
 
-	assert.True(t, isHeightAscending(endorsers))
-	assert.False(t, isHeightAscending(endorsers.Shuffle()))
+	require.True(t, isHeightAscending(endorsers))
+	require.False(t, isHeightAscending(endorsers.Shuffle()))
 }
 
 func TestExclusionAndPriority(t *testing.T) {
 	newPeer := func(i int) *Peer {
 		si := stateInfoWithHeight(uint64(i))
-		am, _ := aliveMessage(i).ToGossipMessage()
+		am, _ := protoext.EnvelopeToGossipMessage(aliveMessage(i))
 		return &Peer{
 			StateInfoMessage: si,
 			AliveMessage:     am,
@@ -52,7 +53,7 @@ func TestExclusionAndPriority(t *testing.T) {
 	})
 
 	givenPeers := Endorsers{newPeer(3), newPeer(5), newPeer(1), newPeer(4), newPeer(2), newPeer(3)}
-	assert.Equal(t, []int{5, 4, 3, 3, 2}, heights(givenPeers.Filter(excludeFirst).Sort(PrioritiesByHeight)))
+	require.Equal(t, []int{5, 4, 3, 3, 2}, heights(givenPeers.Filter(excludeFirst).Sort(PrioritiesByHeight)))
 }
 
 func TestExcludeEndpoints(t *testing.T) {
@@ -68,9 +69,9 @@ func TestExcludeEndpoints(t *testing.T) {
 		Payload: secret,
 	}
 	am3 := aliveMessage(3)
-	g1, _ := am1.ToGossipMessage()
-	g2, _ := am2.ToGossipMessage()
-	g3, _ := am3.ToGossipMessage()
+	g1, _ := protoext.EnvelopeToGossipMessage(am1)
+	g2, _ := protoext.EnvelopeToGossipMessage(am2)
+	g3, _ := protoext.EnvelopeToGossipMessage(am3)
 	p1 := Peer{
 		AliveMessage: g1,
 	}
@@ -82,14 +83,14 @@ func TestExcludeEndpoints(t *testing.T) {
 	}
 
 	s := ExcludeHosts("p1", "s2")
-	assert.True(t, s.Exclude(p1))
-	assert.True(t, s.Exclude(p2))
-	assert.False(t, s.Exclude(p3))
+	require.True(t, s.Exclude(p1))
+	require.True(t, s.Exclude(p2))
+	require.False(t, s.Exclude(p3))
 
 	s = NoExclusion
-	assert.False(t, s.Exclude(p1))
-	assert.False(t, s.Exclude(p2))
-	assert.False(t, s.Exclude(p3))
+	require.False(t, s.Exclude(p1))
+	require.False(t, s.Exclude(p2))
+	require.False(t, s.Exclude(p3))
 }
 
 func TestNoPriorities(t *testing.T) {
@@ -101,7 +102,7 @@ func TestNoPriorities(t *testing.T) {
 	p2 := Peer{
 		StateInfoMessage: s2,
 	}
-	assert.Equal(t, Priority(0), NoPriorities.Compare(p1, p2))
+	require.Equal(t, Priority(0), NoPriorities.Compare(p1, p2))
 }
 
 func TestPrioritiesByHeight(t *testing.T) {
@@ -143,13 +144,13 @@ func TestPrioritiesByHeight(t *testing.T) {
 				StateInfoMessage: s2,
 			}
 			p := PrioritiesByHeight.Compare(p1, p2)
-			assert.Equal(t, test.expected, p)
+			require.Equal(t, test.expected, p)
 		})
 	}
 
 }
 
-func stateInfoWithHeight(h uint64) *gossip.SignedGossipMessage {
+func stateInfoWithHeight(h uint64) *protoext.SignedGossipMessage {
 	g := &gossip.GossipMessage{
 		Content: &gossip.GossipMessage_StateInfo{
 			StateInfo: &gossip.StateInfo{
@@ -160,7 +161,7 @@ func stateInfoWithHeight(h uint64) *gossip.SignedGossipMessage {
 			},
 		},
 	}
-	sMsg, _ := g.NoopSign()
+	sMsg, _ := protoext.NoopSign(g)
 	return sMsg
 }
 

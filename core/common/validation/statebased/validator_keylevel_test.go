@@ -10,13 +10,13 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/hyperledger/fabric-protos-go/common"
+	pb "github.com/hyperledger/fabric-protos-go/peer"
 	"github.com/hyperledger/fabric/common/errors"
+	"github.com/hyperledger/fabric/core/ledger"
 	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/rwsetutil"
-	"github.com/hyperledger/fabric/core/ledger/kvledger/txmgmt/version"
-	"github.com/hyperledger/fabric/protos/common"
-	pb "github.com/hyperledger/fabric/protos/peer"
-	"github.com/hyperledger/fabric/protos/utils"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/fabric/protoutil"
+	"github.com/stretchr/testify/require"
 )
 
 type mockPolicyEvaluator struct {
@@ -24,7 +24,7 @@ type mockPolicyEvaluator struct {
 	EvaluateResByPolicy map[string]error
 }
 
-func (m *mockPolicyEvaluator) Evaluate(policyBytes []byte, signatureSet []*common.SignedData) error {
+func (m *mockPolicyEvaluator) Evaluate(policyBytes []byte, signatureSet []*protoutil.SignedData) error {
 	if res, ok := m.EvaluateResByPolicy[string(policyBytes)]; ok {
 		return res
 	}
@@ -44,18 +44,18 @@ func buildBlockWithTxs(txs ...[]byte) *common.Block {
 }
 
 func buildTXWithRwset(rws []byte) []byte {
-	return utils.MarshalOrPanic(&common.Envelope{
-		Payload: utils.MarshalOrPanic(
+	return protoutil.MarshalOrPanic(&common.Envelope{
+		Payload: protoutil.MarshalOrPanic(
 			&common.Payload{
-				Data: utils.MarshalOrPanic(
+				Data: protoutil.MarshalOrPanic(
 					&pb.Transaction{
 						Actions: []*pb.TransactionAction{
 							{
-								Payload: utils.MarshalOrPanic(&pb.ChaincodeActionPayload{
+								Payload: protoutil.MarshalOrPanic(&pb.ChaincodeActionPayload{
 									Action: &pb.ChaincodeEndorsedAction{
-										ProposalResponsePayload: utils.MarshalOrPanic(
+										ProposalResponsePayload: protoutil.MarshalOrPanic(
 											&pb.ProposalResponsePayload{
-												Extension: utils.MarshalOrPanic(&pb.ChaincodeAction{Results: rws}),
+												Extension: protoutil.MarshalOrPanic(&pb.ChaincodeAction{Results: rws}),
 											},
 										),
 									},
@@ -74,7 +74,7 @@ func rwsetBytes(t *testing.T, cc string) []byte {
 	rwsb.AddToWriteSet(cc, "key", []byte("value"))
 	rws := rwsb.GetTxReadWriteSet()
 	rwsetbytes, err := rws.ToProtoBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	return rwsetbytes
 }
@@ -87,11 +87,11 @@ func TestKeylevelValidation(t *testing.T) {
 	// We simulate policy check success and failure
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 	pe := &mockPolicyEvaluator{}
-	validator := NewKeyLevelValidator(pe, pm)
+	validator := NewKeyLevelValidator(NewV13Evaluator(pe, pm), pm)
 
 	rwsb := rwsetBytes(t, "cc")
 	prp := []byte("barf")
@@ -111,13 +111,13 @@ func TestKeylevelValidation(t *testing.T) {
 	}()
 
 	err := validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), endorsements)
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	pe.EvaluateRV = fmt.Errorf("policy evaluation error")
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), endorsements)
-	assert.Error(t, err)
-	assert.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
+	require.Error(t, err)
+	require.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
 }
 
 func TestKeylevelValidationPvtData(t *testing.T) {
@@ -128,17 +128,17 @@ func TestKeylevelValidationPvtData(t *testing.T) {
 	// We simulate policy check success and failure
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 	pe := &mockPolicyEvaluator{}
-	validator := NewKeyLevelValidator(pe, pm)
+	validator := NewKeyLevelValidator(NewV13Evaluator(pe, pm), pm)
 
 	rwsbu := rwsetutil.NewRWSetBuilder()
 	rwsbu.AddToPvtAndHashedWriteSet("cc", "coll", "key", []byte("value"))
 	rws := rwsbu.GetTxReadWriteSet()
 	rwsb, err := rws.ToProtoBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	prp := []byte("barf")
 	block := buildBlockWithTxs(buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")), buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")))
 
@@ -149,13 +149,13 @@ func TestKeylevelValidationPvtData(t *testing.T) {
 	}()
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	pe.EvaluateRV = fmt.Errorf("policy evaluation error")
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.Error(t, err)
-	assert.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
+	require.Error(t, err)
+	require.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
 }
 
 func TestKeylevelValidationMetaUpdate(t *testing.T) {
@@ -166,17 +166,17 @@ func TestKeylevelValidationMetaUpdate(t *testing.T) {
 	// We simulate policy check success and failure
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 	pe := &mockPolicyEvaluator{}
-	validator := NewKeyLevelValidator(pe, pm)
+	validator := NewKeyLevelValidator(NewV13Evaluator(pe, pm), pm)
 
 	rwsbu := rwsetutil.NewRWSetBuilder()
 	rwsbu.AddToMetadataWriteSet("cc", "key", map[string][]byte{})
 	rws := rwsbu.GetTxReadWriteSet()
 	rwsb, err := rws.ToProtoBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	prp := []byte("barf")
 	block := buildBlockWithTxs(buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")), buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")))
 
@@ -187,13 +187,13 @@ func TestKeylevelValidationMetaUpdate(t *testing.T) {
 	}()
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	pe.EvaluateRV = fmt.Errorf("policy evaluation error")
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.Error(t, err)
-	assert.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
+	require.Error(t, err)
+	require.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
 }
 
 func TestKeylevelValidationPvtMetaUpdate(t *testing.T) {
@@ -204,17 +204,17 @@ func TestKeylevelValidationPvtMetaUpdate(t *testing.T) {
 	// We simulate policy check success and failure
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 	pe := &mockPolicyEvaluator{}
-	validator := NewKeyLevelValidator(pe, pm)
+	validator := NewKeyLevelValidator(NewV13Evaluator(pe, pm), pm)
 
 	rwsbu := rwsetutil.NewRWSetBuilder()
 	rwsbu.AddToHashedMetadataWriteSet("cc", "coll", "key", map[string][]byte{})
 	rws := rwsbu.GetTxReadWriteSet()
 	rwsb, err := rws.ToProtoBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	prp := []byte("barf")
 	block := buildBlockWithTxs(buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")), buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")))
 
@@ -225,13 +225,13 @@ func TestKeylevelValidationPvtMetaUpdate(t *testing.T) {
 	}()
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	pe.EvaluateRV = fmt.Errorf("policy evaluation error")
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.Error(t, err)
-	assert.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
+	require.Error(t, err)
+	require.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
 }
 
 func TestKeylevelValidationPolicyRetrievalFailure(t *testing.T) {
@@ -244,8 +244,8 @@ func TestKeylevelValidationPolicyRetrievalFailure(t *testing.T) {
 
 	mr := &mockState{GetStateMetadataErr: fmt.Errorf("metadata retrieval failure")}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
-	validator := NewKeyLevelValidator(&mockPolicyEvaluator{}, pm)
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
+	validator := NewKeyLevelValidator(NewV13Evaluator(&mockPolicyEvaluator{}, pm), pm)
 
 	rwsb := rwsetBytes(t, "cc")
 	prp := []byte("barf")
@@ -258,8 +258,50 @@ func TestKeylevelValidationPolicyRetrievalFailure(t *testing.T) {
 	}()
 
 	err := validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.Error(t, err)
-	assert.IsType(t, &errors.VSCCExecutionFailureError{}, err)
+	require.Error(t, err)
+	require.IsType(t, &errors.VSCCExecutionFailureError{}, err)
+}
+
+func TestKeylevelValidationLedgerFailures(t *testing.T) {
+	// Scenario: we validate a transaction that updates
+	// the key-level validation parameters for a key.
+	// we simulate the case where we fail to retrieve
+	// the validation parameters from the ledger with
+	// both deterministic and non-deterministic errors
+
+	rwsb := rwsetBytes(t, "cc")
+	prp := []byte("barf")
+
+	t.Run("CollConfigNotDefinedError", func(t *testing.T) {
+		mr := &mockState{GetStateMetadataErr: &ledger.CollConfigNotDefinedError{Ns: "mycc"}}
+		ms := &mockStateFetcher{FetchStateRv: mr}
+		pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
+		validator := NewKeyLevelValidator(NewV13Evaluator(&mockPolicyEvaluator{}, pm), pm)
+
+		err := validator.Validate("cc", 1, 0, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
+		require.NoError(t, err)
+	})
+
+	t.Run("InvalidCollNameError", func(t *testing.T) {
+		mr := &mockState{GetStateMetadataErr: &ledger.InvalidCollNameError{Ns: "mycc", Coll: "mycoll"}}
+		ms := &mockStateFetcher{FetchStateRv: mr}
+		pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
+		validator := NewKeyLevelValidator(NewV13Evaluator(&mockPolicyEvaluator{}, pm), pm)
+
+		err := validator.Validate("cc", 1, 0, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
+		require.NoError(t, err)
+	})
+
+	t.Run("I/O error", func(t *testing.T) {
+		mr := &mockState{GetStateMetadataErr: fmt.Errorf("some I/O error")}
+		ms := &mockStateFetcher{FetchStateRv: mr}
+		pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
+		validator := NewKeyLevelValidator(NewV13Evaluator(&mockPolicyEvaluator{}, pm), pm)
+
+		err := validator.Validate("cc", 1, 0, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
+		require.Error(t, err)
+		require.IsType(t, &errors.VSCCExecutionFailureError{}, err)
+	})
 }
 
 func TestCCEPValidation(t *testing.T) {
@@ -269,20 +311,20 @@ func TestCCEPValidation(t *testing.T) {
 	// touch any key with a state-based endorsement policy;
 	// we expect to check the normal cc-endorsement policy.
 
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{}, GetPrivateDataMetadataRv: map[string][]byte{}}
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{}, GetPrivateDataMetadataByHashRv: map[string][]byte{}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 	pe := &mockPolicyEvaluator{}
-	validator := NewKeyLevelValidator(pe, pm)
+	validator := NewKeyLevelValidator(NewV13Evaluator(pe, pm), pm)
 
 	rwsbu := rwsetutil.NewRWSetBuilder()
 	rwsbu.AddToWriteSet("cc", "key", []byte("value"))
 	rwsbu.AddToWriteSet("cc", "key1", []byte("value"))
-	rwsbu.AddToReadSet("cc", "readkey", &version.Height{})
-	rwsbu.AddToHashedReadSet("cc", "coll", "readpvtkey", &version.Height{})
+	rwsbu.AddToReadSet("cc", "readkey", nil)
+	rwsbu.AddToHashedReadSet("cc", "coll", "readpvtkey", nil)
 	rws := rwsbu.GetTxReadWriteSet()
 	rwsb, err := rws.ToProtoBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	prp := []byte("barf")
 	block := buildBlockWithTxs(buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")), buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")))
 
@@ -293,13 +335,13 @@ func TestCCEPValidation(t *testing.T) {
 	}()
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	pe.EvaluateRV = fmt.Errorf("policy evaluation error")
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.Error(t, err)
-	assert.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
+	require.Error(t, err)
+	require.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
 }
 
 func TestCCEPValidationReads(t *testing.T) {
@@ -309,17 +351,17 @@ func TestCCEPValidationReads(t *testing.T) {
 	// touch any key with a state-based endorsement policy;
 	// we expect to check the normal cc-endorsement policy.
 
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{}, GetPrivateDataMetadataRv: map[string][]byte{}}
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{}, GetPrivateDataMetadataByHashRv: map[string][]byte{}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 	pe := &mockPolicyEvaluator{}
-	validator := NewKeyLevelValidator(pe, pm)
+	validator := NewKeyLevelValidator(NewV13Evaluator(pe, pm), pm)
 
 	rwsbu := rwsetutil.NewRWSetBuilder()
-	rwsbu.AddToReadSet("cc", "readkey", &version.Height{})
+	rwsbu.AddToReadSet("cc", "readkey", nil)
 	rws := rwsbu.GetTxReadWriteSet()
 	rwsb, err := rws.ToProtoBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	prp := []byte("barf")
 	block := buildBlockWithTxs(buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")), buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")))
 
@@ -330,13 +372,13 @@ func TestCCEPValidationReads(t *testing.T) {
 	}()
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	pe.EvaluateRV = fmt.Errorf("policy evaluation error")
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.Error(t, err)
-	assert.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
+	require.Error(t, err)
+	require.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
 }
 
 func TestOnlySBEPChecked(t *testing.T) {
@@ -351,9 +393,9 @@ func TestOnlySBEPChecked(t *testing.T) {
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
 	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("SBEP")}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 	pe := &mockPolicyEvaluator{}
-	validator := NewKeyLevelValidator(pe, pm)
+	validator := NewKeyLevelValidator(NewV13Evaluator(pe, pm), pm)
 
 	rwsb := rwsetBytes(t, "cc")
 	prp := []byte("barf")
@@ -371,7 +413,7 @@ func TestOnlySBEPChecked(t *testing.T) {
 	}
 
 	err := validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// we also test with a read-write set that has a read as well as a write
 	rwsbu := rwsetutil.NewRWSetBuilder()
@@ -381,7 +423,7 @@ func TestOnlySBEPChecked(t *testing.T) {
 	rwsb, _ = rws.ToProtoBytes()
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 }
 
 func TestCCEPValidationPvtReads(t *testing.T) {
@@ -391,17 +433,17 @@ func TestCCEPValidationPvtReads(t *testing.T) {
 	// touch any key with a state-based endorsement policy;
 	// we expect to check the normal cc-endorsement policy.
 
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{}, GetPrivateDataMetadataRv: map[string][]byte{}}
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{}, GetPrivateDataMetadataByHashRv: map[string][]byte{}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
 	pe := &mockPolicyEvaluator{}
-	validator := NewKeyLevelValidator(pe, pm)
+	validator := NewKeyLevelValidator(NewV13Evaluator(pe, pm), pm)
 
 	rwsbu := rwsetutil.NewRWSetBuilder()
-	rwsbu.AddToHashedReadSet("cc", "coll", "readpvtkey", &version.Height{})
+	rwsbu.AddToHashedReadSet("cc", "coll", "readpvtkey", nil)
 	rws := rwsbu.GetTxReadWriteSet()
 	rwsb, err := rws.ToProtoBytes()
-	assert.NoError(t, err)
+	require.NoError(t, err)
 	prp := []byte("barf")
 	block := buildBlockWithTxs(buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")), buildTXWithRwset(rwsetUpdatingMetadataFor("cc", "key")))
 
@@ -412,13 +454,13 @@ func TestCCEPValidationPvtReads(t *testing.T) {
 	}()
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	pe.EvaluateRV = fmt.Errorf("policy evaluation error")
 
 	err = validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.Error(t, err)
-	assert.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
+	require.Error(t, err)
+	require.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
 }
 
 func TestKeylevelValidationFailure(t *testing.T) {
@@ -431,10 +473,10 @@ func TestKeylevelValidationFailure(t *testing.T) {
 	// for that very same key.
 
 	vpMetadataKey := pb.MetaDataKeys_VALIDATION_PARAMETER.String()
-	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
+	mr := &mockState{GetStateMetadataRv: map[string][]byte{vpMetadataKey: []byte("EP")}, GetPrivateDataMetadataByHashRv: map[string][]byte{vpMetadataKey: []byte("EP")}}
 	ms := &mockStateFetcher{FetchStateRv: mr}
-	pm := &KeyLevelValidationParameterManagerImpl{StateFetcher: ms}
-	validator := NewKeyLevelValidator(&mockPolicyEvaluator{}, pm)
+	pm := &KeyLevelValidationParameterManagerImpl{PolicyTranslator: &mockTranslator{}, StateFetcher: ms}
+	validator := NewKeyLevelValidator(NewV13Evaluator(&mockPolicyEvaluator{}, pm), pm)
 
 	rwsb := rwsetBytes(t, "cc")
 	prp := []byte("barf")
@@ -447,6 +489,6 @@ func TestKeylevelValidationFailure(t *testing.T) {
 	}()
 
 	err := validator.Validate("cc", 1, 1, rwsb, prp, []byte("CCEP"), []*pb.Endorsement{})
-	assert.Error(t, err)
-	assert.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
+	require.Error(t, err)
+	require.IsType(t, &errors.VSCCEndorsementPolicyError{}, err)
 }

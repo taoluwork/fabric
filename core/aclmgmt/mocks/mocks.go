@@ -9,8 +9,8 @@ package mocks
 import (
 	"testing"
 
+	"github.com/hyperledger/fabric-protos-go/common"
 	"github.com/hyperledger/fabric/core/ledger"
-	"github.com/hyperledger/fabric/protos/common"
 	"github.com/stretchr/testify/mock"
 )
 
@@ -27,6 +27,11 @@ func (m *MockACLProvider) Reset() {
 
 func (m *MockACLProvider) CheckACL(resName string, channelID string, idinfo interface{}) error {
 	args := m.mock.Called(resName, channelID, idinfo)
+	return args.Error(0)
+}
+
+func (m *MockACLProvider) CheckACLNoChannel(resName string, idinfo interface{}) error {
+	args := m.mock.Called(resName, idinfo)
 	return args.Error(0)
 }
 

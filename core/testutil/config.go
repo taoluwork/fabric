@@ -10,15 +10,13 @@ import (
 	"flag"
 	"fmt"
 	"io/ioutil"
-	"runtime"
 	"strings"
-
-	"github.com/spf13/viper"
 
 	"github.com/hyperledger/fabric/bccsp/factory"
 	"github.com/hyperledger/fabric/common/flogging"
 	"github.com/hyperledger/fabric/core/config/configtest"
 	"github.com/hyperledger/fabric/msp"
+	"github.com/spf13/viper"
 )
 
 var configLogger = flogging.MustGetLogger("config")
@@ -33,19 +31,12 @@ func SetupTestConfig() {
 	replacer := strings.NewReplacer(".", "_")
 	viper.SetEnvKeyReplacer(replacer)
 	viper.SetConfigName("core") // name of config file (without extension)
-	err := configtest.AddDevConfigPath(nil)
-	if err != nil {
-		panic(fmt.Errorf("Fatal error adding DevConfigPath: %s \n", err))
-	}
+	configtest.AddDevConfigPath(nil)
 
-	err = viper.ReadInConfig() // Find and read the config file
-	if err != nil {            // Handle errors reading the config file
+	err := viper.ReadInConfig() // Find and read the config file
+	if err != nil {             // Handle errors reading the config file
 		panic(fmt.Errorf("Fatal error config file: %s \n", err))
 	}
-
-	// Set the number of maxprocs
-	var numProcsDesired = viper.GetInt("peer.gomaxprocs")
-	configLogger.Debugf("setting Number of procs to %d, was %d\n", numProcsDesired, runtime.GOMAXPROCS(numProcsDesired))
 
 	// Init the BCCSP
 	var bccspConfig *factory.FactoryOpts

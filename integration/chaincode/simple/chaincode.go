@@ -8,10 +8,11 @@ package simple
 
 import (
 	"fmt"
+	"os"
 	"strconv"
 
-	"github.com/hyperledger/fabric/core/chaincode/shim"
-	pb "github.com/hyperledger/fabric/protos/peer"
+	"github.com/hyperledger/fabric-chaincode-go/shim"
+	pb "github.com/hyperledger/fabric-protos-go/peer"
 )
 
 // SimpleChaincode example simple Chaincode implementation
@@ -59,19 +60,29 @@ func (t *SimpleChaincode) Init(stub shim.ChaincodeStubInterface) pb.Response {
 
 func (t *SimpleChaincode) Invoke(stub shim.ChaincodeStubInterface) pb.Response {
 	fmt.Println("ex02 Invoke")
+	if os.Getenv("DEVMODE_ENABLED") != "" {
+		fmt.Println("invoking in devmode")
+	}
 	function, args := stub.GetFunctionAndParameters()
-	if function == "invoke" {
+	switch function {
+	case "invoke":
 		// Make payment of X units from A to B
 		return t.invoke(stub, args)
-	} else if function == "delete" {
+	case "delete":
 		// Deletes an entity from its state
 		return t.delete(stub, args)
-	} else if function == "query" {
+	case "query":
 		// the old "Query" is now implemtned in invoke
 		return t.query(stub, args)
+	case "respond":
+		// return with an error
+		return t.respond(stub, args)
+	case "mspid":
+		// Checks the shim's GetMSPID() API
+		return t.mspid(args)
+	default:
+		return shim.Error(`Invalid invoke function name. Expecting "invoke", "delete", "query", "respond", or "mspid"`)
 	}
-
-	return shim.Error("Invalid invoke function name. Expecting \"invoke\" \"delete\" \"query\"")
 }
 
 // Transaction makes payment of X units from A to B
@@ -174,4 +185,47 @@ func (t *SimpleChaincode) query(stub shim.ChaincodeStubInterface, args []string)
 	jsonResp := "{\"Name\":\"" + A + "\",\"Amount\":\"" + string(Avalbytes) + "\"}"
 	fmt.Printf("Query Response:%s\n", jsonResp)
 	return shim.Success(Avalbytes)
+}
+
+// respond simply generates a response payload from the args
+func (t *SimpleChaincode) respond(stub shim.ChaincodeStubInterface, args []string) pb.Response {
+	if len(args) != 3 {
+		return shim.Error("expected three arguments")
+	}
+
+	status, err := strconv.ParseInt(args[0], 10, 32)
+	if err != nil {
+		return shim.Error(err.Error())
+	}
+	message := args[1]
+	payload := []byte(args[2])
+
+	return pb.Response{
+		Status:  int32(status),
+		Message: message,
+		Payload: payload,
+	}
+}
+
+// mspid simply calls shim.GetMSPID() to verify the mspid was properly passed from the peer
+// via the CORE_PEER_LOCALMSPID env var
+func (t *SimpleChaincode) mspid(args []string) pb.Response {
+	if len(args) != 0 {
+		return shim.Error("expected no arguments")
+	}
+
+	// Get the mspid from the env var
+	mspid, err := shim.GetMSPID()
+	if err != nil {
+		jsonResp := "{\"Error\":\"Failed to get mspid\"}"
+		return shim.Error(jsonResp)
+	}
+
+	if mspid == "" {
+		jsonResp := "{\"Error\":\"Empty mspid\"}"
+		return shim.Error(jsonResp)
+	}
+
+	fmt.Printf("MSPID:%s\n", mspid)
+	return shim.Success([]byte(mspid))
 }

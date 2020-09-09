@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/hyperledger/fabric/common/flogging"
-	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"go.uber.org/zap/zapcore"
 )
 
@@ -19,6 +19,7 @@ func TestNameToLevel(t *testing.T) {
 		names []string
 		level zapcore.Level
 	}{
+		{names: []string{"PAYLOAD", "payload"}, level: flogging.PayloadLevel},
 		{names: []string{"DEBUG", "debug"}, level: zapcore.DebugLevel},
 		{names: []string{"INFO", "info"}, level: zapcore.InfoLevel},
 		{names: []string{"WARNING", "warning", "WARN", "warn"}, level: zapcore.WarnLevel},
@@ -34,7 +35,7 @@ func TestNameToLevel(t *testing.T) {
 	for _, tc := range tests {
 		for _, name := range tc.names {
 			t.Run(name, func(t *testing.T) {
-				assert.Equal(t, tc.level, flogging.NameToLevel(name))
+				require.Equal(t, tc.level, flogging.NameToLevel(name))
 			})
 		}
 	}
@@ -42,6 +43,7 @@ func TestNameToLevel(t *testing.T) {
 
 func TestIsValidLevel(t *testing.T) {
 	validNames := []string{
+		"PAYLOAD", "payload",
 		"DEBUG", "debug",
 		"INFO", "info",
 		"WARNING", "warning",
@@ -55,17 +57,18 @@ func TestIsValidLevel(t *testing.T) {
 	}
 	for _, name := range validNames {
 		t.Run(name, func(t *testing.T) {
-			assert.True(t, flogging.IsValidLevel(name))
+			require.True(t, flogging.IsValidLevel(name))
 		})
 	}
 
 	invalidNames := []string{
 		"george", "bob",
 		"warnings", "inf",
+		"DISABLED", "disabled", // can only be used programmatically
 	}
 	for _, name := range invalidNames {
 		t.Run(name, func(t *testing.T) {
-			assert.False(t, flogging.IsValidLevel(name))
+			require.False(t, flogging.IsValidLevel(name))
 		})
 	}
 }

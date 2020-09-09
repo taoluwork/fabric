@@ -14,16 +14,24 @@ import (
 
 	"github.com/Shopify/sarama"
 	"github.com/golang/protobuf/proto"
+	cb "github.com/hyperledger/fabric-protos-go/common"
+	ab "github.com/hyperledger/fabric-protos-go/orderer"
+	"github.com/hyperledger/fabric/common/channelconfig"
 	"github.com/hyperledger/fabric/common/flogging"
-	mockconfig "github.com/hyperledger/fabric/common/mocks/config"
-	localconfig "github.com/hyperledger/fabric/orderer/common/localconfig"
+	"github.com/hyperledger/fabric/common/metrics/disabled"
+	"github.com/hyperledger/fabric/orderer/common/localconfig"
 	"github.com/hyperledger/fabric/orderer/consensus"
+	"github.com/hyperledger/fabric/orderer/consensus/kafka/mock"
 	mockmultichannel "github.com/hyperledger/fabric/orderer/mocks/common/multichannel"
-	cb "github.com/hyperledger/fabric/protos/common"
-	ab "github.com/hyperledger/fabric/protos/orderer"
-	"github.com/hyperledger/fabric/protos/utils"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/fabric/protoutil"
+	"github.com/stretchr/testify/require"
 )
+
+//go:generate counterfeiter -o mock/orderer_config.go --fake-name OrdererConfig . ordererConfig
+
+type ordererConfig interface {
+	channelconfig.Orderer
+}
 
 var mockRetryOptions = localconfig.Retry{
 	ShortInterval: 50 * time.Millisecond,
@@ -69,11 +77,12 @@ func init() {
 }
 
 func TestNew(t *testing.T) {
-	_ = consensus.Consenter(New(mockLocalConfig.Kafka))
+	c, _ := New(mockLocalConfig.Kafka, &mock.MetricsProvider{}, &mock.HealthChecker{}, nil, func(string) {})
+	_ = consensus.Consenter(c)
 }
 
 func TestHandleChain(t *testing.T) {
-	consenter := consensus.Consenter(New(mockLocalConfig.Kafka))
+	consenter, _ := New(mockLocalConfig.Kafka, &disabled.Provider{}, &mock.HealthChecker{}, nil, func(string) {})
 
 	oldestOffset := int64(0)
 	newestOffset := int64(5)
@@ -95,17 +104,16 @@ func TestHandleChain(t *testing.T) {
 			SetMessage(mockChannel.topic(), mockChannel.partition(), newestOffset, message),
 	})
 
+	mockOrderer := &mock.OrdererConfig{}
+	mockOrderer.KafkaBrokersReturns([]string{mockBroker.Addr()})
 	mockSupport := &mockmultichannel.ConsenterSupport{
-		ChainIDVal: mockChannel.topic(),
-		SharedConfigVal: &mockconfig.Orderer{
-			KafkaBrokersVal: []string{mockBroker.Addr()},
-		},
+		ChannelIDVal:    mockChannel.topic(),
+		SharedConfigVal: mockOrderer,
 	}
 
-	mockMetadata := &cb.Metadata{Value: utils.MarshalOrPanic(&ab.KafkaMetadata{LastOffsetPersisted: newestOffset - 1})}
-
+	mockMetadata := &cb.Metadata{Value: protoutil.MarshalOrPanic(&ab.KafkaMetadata{LastOffsetPersisted: newestOffset - 1})}
 	_, err := consenter.HandleChain(mockSupport, mockMetadata)
-	assert.NoError(t, err, "Expected the HandleChain call to return without errors")
+	require.NoError(t, err, "Expected the HandleChain call to return without errors")
 }
 
 // Test helper functions and mock objects defined here
@@ -145,18 +153,19 @@ func newMockConsenter(brokerConfig *sarama.Config, tlsConfig localconfig.TLS, re
 		tlsConfigVal:    tlsConfig,
 		retryOptionsVal: retryOptions,
 		kafkaVersionVal: kafkaVersion,
+		metrics:         NewMetrics(&disabled.Provider{}, nil),
 	}
 }
 
 func newMockConsumerMessage(wrappedMessage *ab.KafkaMessage) *sarama.ConsumerMessage {
 	return &sarama.ConsumerMessage{
-		Value: sarama.ByteEncoder(utils.MarshalOrPanic(wrappedMessage)),
+		Value: sarama.ByteEncoder(protoutil.MarshalOrPanic(wrappedMessage)),
 	}
 }
 
 func newMockEnvelope(content string) *cb.Envelope {
-	return &cb.Envelope{Payload: utils.MarshalOrPanic(&cb.Payload{
-		Header: &cb.Header{ChannelHeader: utils.MarshalOrPanic(&cb.ChannelHeader{ChannelId: "foo"})},
+	return &cb.Envelope{Payload: protoutil.MarshalOrPanic(&cb.Payload{
+		Header: &cb.Header{ChannelHeader: protoutil.MarshalOrPanic(&cb.ChannelHeader{ChannelId: "foo"})},
 		Data:   []byte(content),
 	})}
 }
@@ -189,8 +198,8 @@ func setupTestLogging(logLevel string) {
 	// This call allows us to (a) get the logging backend initialization that
 	// takes place in the `flogging` package, and (b) adjust the verbosity of
 	// the logs when running tests on this package.
-	flogging.SetModuleLevel(pkgLogID, logLevel)
-	flogging.SetModuleLevel(saramaLogID, logLevel)
+	spec := fmt.Sprintf("orderer.consensus.kafka=%s", logLevel)
+	flogging.ActivateSpec(spec)
 }
 
 func tamperBytes(original []byte) []byte {

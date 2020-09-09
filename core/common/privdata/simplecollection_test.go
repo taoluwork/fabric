@@ -12,14 +12,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/hyperledger/fabric/common/cauthdsl"
+	cb "github.com/hyperledger/fabric-protos-go/common"
+	mb "github.com/hyperledger/fabric-protos-go/msp"
+	pb "github.com/hyperledger/fabric-protos-go/peer"
+	"github.com/hyperledger/fabric/common/policydsl"
 	"github.com/hyperledger/fabric/msp"
-	pb "github.com/hyperledger/fabric/protos/common"
-	mb "github.com/hyperledger/fabric/protos/msp"
-	"github.com/stretchr/testify/assert"
+	"github.com/hyperledger/fabric/protoutil"
+	"github.com/stretchr/testify/require"
 )
 
-func createCollectionPolicyConfig(accessPolicy *pb.SignaturePolicyEnvelope) *pb.CollectionPolicyConfig {
+func createCollectionPolicyConfig(accessPolicy *cb.SignaturePolicyEnvelope) *pb.CollectionPolicyConfig {
 	cpcSp := &pb.CollectionPolicyConfig_SignaturePolicy{
 		SignaturePolicy: accessPolicy,
 	}
@@ -42,7 +44,7 @@ func (id *mockIdentity) ExpiresAt() time.Time {
 }
 
 func (id *mockIdentity) SatisfiesPrincipal(p *mb.MSPPrincipal) error {
-	if bytes.Compare(id.idBytes, p.Principal) == 0 {
+	if bytes.Equal(id.idBytes, p.Principal) {
 		return nil
 	}
 	return errors.New("Principals do not match")
@@ -65,7 +67,7 @@ func (id *mockIdentity) GetOrganizationalUnits() []*msp.OUIdentifier {
 }
 
 func (id *mockIdentity) Verify(msg []byte, sig []byte) error {
-	if bytes.Compare(sig, []byte("badsigned")) == 0 {
+	if bytes.Equal(sig, []byte("badsigned")) {
 		return errors.New("Invalid signature")
 	}
 	return nil
@@ -90,17 +92,72 @@ func (md *mockDeserializer) IsWellFormed(_ *mb.SerializedIdentity) error {
 	return nil
 }
 
-func TestSetupBadConfig(t *testing.T) {
+func TestNewSimpleCollectionWithBadConfig(t *testing.T) {
+	// set up simple collection with nil collection config
+	_, err := NewSimpleCollection(nil, &mockDeserializer{})
+	require.Error(t, err)
+
+	// create static collection config with faulty policy
+	collectionConfig := &pb.StaticCollectionConfig{
+		Name:              "test collection",
+		RequiredPeerCount: 1,
+		MemberOrgsPolicy:  getBadAccessPolicy([]string{"peer0", "peer1"}, 3),
+	}
+	_, err = NewSimpleCollection(collectionConfig, &mockDeserializer{})
+	require.Error(t, err)
+	require.EqualError(t, err, "failed constructing policy object out of collection policy config: identity index out of range, requested 3, but identities length is 2")
+}
+
+func TestNewSimpleCollectionWithGoodConfig(t *testing.T) {
+	// create member access policy
+	var signers = [][]byte{[]byte("signer0"), []byte("signer1")}
+	policyEnvelope := policydsl.Envelope(policydsl.Or(policydsl.SignedBy(0), policydsl.SignedBy(1)), signers)
+	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
+
+	// create static collection config
+	collectionConfig := &pb.StaticCollectionConfig{
+		Name:              "test collection",
+		RequiredPeerCount: 1,
+		MemberOrgsPolicy:  accessPolicy,
+	}
+
+	// set up simple collection with valid data
+	sc, err := NewSimpleCollection(collectionConfig, &mockDeserializer{})
+	require.NoError(t, err)
+
+	// check name
+	require.True(t, sc.CollectionID() == "test collection")
+
+	// check members
+	members := sc.MemberOrgs()
+	require.Contains(t, members, "signer0")
+	require.Contains(t, members, "signer1")
+
+	// check required peer count
+	require.True(t, sc.RequiredPeerCount() == 1)
+}
+
+func TestSetupWithBadConfig(t *testing.T) {
 	// set up simple collection with invalid data
 	var sc SimpleCollection
 	err := sc.Setup(&pb.StaticCollectionConfig{}, &mockDeserializer{})
-	assert.Error(t, err)
+	require.Error(t, err)
+
+	// create static collection config with faulty policy
+	collectionConfig := &pb.StaticCollectionConfig{
+		Name:              "test collection",
+		RequiredPeerCount: 1,
+		MemberOrgsPolicy:  getBadAccessPolicy([]string{"peer0", "peer1"}, 3),
+	}
+	err = sc.Setup(collectionConfig, &mockDeserializer{})
+	require.Error(t, err)
+	require.EqualError(t, err, "failed constructing policy object out of collection policy config: identity index out of range, requested 3, but identities length is 2")
 }
 
 func TestSetupGoodConfigCollection(t *testing.T) {
 	// create member access policy
 	var signers = [][]byte{[]byte("signer0"), []byte("signer1")}
-	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	policyEnvelope := policydsl.Envelope(policydsl.Or(policydsl.SignedBy(0), policydsl.SignedBy(1)), signers)
 	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
 
 	// create static collection config
@@ -113,24 +170,24 @@ func TestSetupGoodConfigCollection(t *testing.T) {
 	// set up simple collection with valid data
 	var sc SimpleCollection
 	err := sc.Setup(collectionConfig, &mockDeserializer{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// check name
-	assert.True(t, sc.CollectionID() == "test collection")
+	require.True(t, sc.CollectionID() == "test collection")
 
 	// check members
 	members := sc.MemberOrgs()
-	assert.True(t, members[0] == "signer0")
-	assert.True(t, members[1] == "signer1")
+	require.Contains(t, members, "signer0")
+	require.Contains(t, members, "signer1")
 
 	// check required peer count
-	assert.True(t, sc.RequiredPeerCount() == 1)
+	require.True(t, sc.RequiredPeerCount() == 1)
 }
 
 func TestSimpleCollectionFilter(t *testing.T) {
 	// create member access policy
 	var signers = [][]byte{[]byte("signer0"), []byte("signer1")}
-	policyEnvelope := cauthdsl.Envelope(cauthdsl.Or(cauthdsl.SignedBy(0), cauthdsl.SignedBy(1)), signers)
+	policyEnvelope := policydsl.Envelope(policydsl.Or(policydsl.SignedBy(0), policydsl.SignedBy(1)), signers)
 	accessPolicy := createCollectionPolicyConfig(policyEnvelope)
 
 	// create static collection config
@@ -143,26 +200,24 @@ func TestSimpleCollectionFilter(t *testing.T) {
 	// set up simple collection
 	var sc SimpleCollection
 	err := sc.Setup(collectionConfig, &mockDeserializer{})
-	assert.NoError(t, err)
+	require.NoError(t, err)
 
 	// get the collection access filter
-	var cap CollectionAccessPolicy
-	cap = &sc
-	accessFilter := cap.AccessFilter()
+	accessFilter := (&sc).AccessFilter()
 
 	// check filter: not a member of the collection
-	notMember := pb.SignedData{
+	notMember := protoutil.SignedData{
 		Identity:  []byte{1, 2, 3},
 		Signature: []byte{},
 		Data:      []byte{},
 	}
-	assert.False(t, accessFilter(notMember))
+	require.False(t, accessFilter(notMember))
 
 	// check filter: member of the collection
-	member := pb.SignedData{
+	member := protoutil.SignedData{
 		Identity:  signers[0],
 		Signature: []byte{},
 		Data:      []byte{},
 	}
-	assert.True(t, accessFilter(member))
+	require.True(t, accessFilter(member))
 }

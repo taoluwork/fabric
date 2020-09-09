@@ -12,51 +12,42 @@ package endorser
 import (
 	"testing"
 
-	"github.com/golang/protobuf/proto"
-	"github.com/hyperledger/fabric/core/common/privdata"
-	"github.com/hyperledger/fabric/protos/common"
-	"github.com/hyperledger/fabric/protos/ledger/rwset"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/mock"
+	"github.com/hyperledger/fabric-protos-go/ledger/rwset"
+	"github.com/hyperledger/fabric-protos-go/peer"
+	"github.com/hyperledger/fabric/core/ledger"
+	"github.com/hyperledger/fabric/core/ledger/mock"
+	"github.com/stretchr/testify/require"
 )
 
-// CollectionConfigRetriever is mock type for the CollectionConfigRetriever type
-type mockCollectionConfigRetriever struct {
-	mock.Mock
-}
-
-// GetState provides a mock function with given fields: namespace, key
-func (_m *mockCollectionConfigRetriever) GetState(namespace string, key string) ([]byte, error) {
-	result := _m.Called(namespace, key)
-	return result.Get(0).([]byte), result.Error(1)
-}
-
 func TestAssemblePvtRWSet(t *testing.T) {
-	collectionsConfigCC1 := &common.CollectionConfigPackage{
-		Config: []*common.CollectionConfig{
+	collectionsConfigCC1 := &peer.CollectionConfigPackage{
+		Config: []*peer.CollectionConfig{
 			{
-				Payload: &common.CollectionConfig_StaticCollectionConfig{
-					StaticCollectionConfig: &common.StaticCollectionConfig{
+				Payload: &peer.CollectionConfig_StaticCollectionConfig{
+					StaticCollectionConfig: &peer.StaticCollectionConfig{
 						Name: "mycollection-1",
 					},
 				},
 			},
 			{
-				Payload: &common.CollectionConfig_StaticCollectionConfig{
-					StaticCollectionConfig: &common.StaticCollectionConfig{
+				Payload: &peer.CollectionConfig_StaticCollectionConfig{
+					StaticCollectionConfig: &peer.StaticCollectionConfig{
 						Name: "mycollection-2",
 					},
 				},
 			},
 		},
 	}
-	colB, err := proto.Marshal(collectionsConfigCC1)
-	assert.NoError(t, err)
 
-	configRetriever := &mockCollectionConfigRetriever{}
-	configRetriever.On("GetState", "lscc", privdata.BuildCollectionKVSKey("myCC")).Return(colB, nil)
-
-	assembler := rwSetAssembler{}
+	mockDeployedCCInfoProvider := &mock.DeployedChaincodeInfoProvider{}
+	mockDeployedCCInfoProvider.ChaincodeInfoReturns(
+		&ledger.DeployedChaincodeInfo{
+			ExplicitCollectionConfigPkg: collectionsConfigCC1,
+			Name:                        "myCC",
+		},
+		nil,
+	)
+	mockDeployedCCInfoProvider.AllCollectionsConfigPkgReturns(collectionsConfigCC1, nil)
 
 	privData := &rwset.TxPvtReadWriteSet{
 		DataModel: rwset.TxReadWriteSet_KV,
@@ -73,18 +64,18 @@ func TestAssemblePvtRWSet(t *testing.T) {
 		},
 	}
 
-	pvtReadWriteSetWithConfigInfo, err := assembler.AssemblePvtRWSet(privData, configRetriever)
-	assert.NoError(t, err)
-	assert.NotNil(t, pvtReadWriteSetWithConfigInfo)
-	assert.NotNil(t, pvtReadWriteSetWithConfigInfo.PvtRwset)
+	pvtReadWriteSetWithConfigInfo, err := AssemblePvtRWSet("", privData, nil, mockDeployedCCInfoProvider)
+	require.NoError(t, err)
+	require.NotNil(t, pvtReadWriteSetWithConfigInfo)
+	require.NotNil(t, pvtReadWriteSetWithConfigInfo.PvtRwset)
 	configPackages := pvtReadWriteSetWithConfigInfo.CollectionConfigs
-	assert.NotNil(t, configPackages)
+	require.NotNil(t, configPackages)
 	configs, found := configPackages["myCC"]
-	assert.True(t, found)
-	assert.Equal(t, 1, len(configs.Config))
-	assert.NotNil(t, configs.Config[0])
-	assert.NotNil(t, configs.Config[0].GetStaticCollectionConfig())
-	assert.Equal(t, "mycollection-1", configs.Config[0].GetStaticCollectionConfig().Name)
-	assert.Equal(t, 1, len(pvtReadWriteSetWithConfigInfo.PvtRwset.NsPvtRwset))
+	require.True(t, found)
+	require.Equal(t, 1, len(configs.Config))
+	require.NotNil(t, configs.Config[0])
+	require.NotNil(t, configs.Config[0].GetStaticCollectionConfig())
+	require.Equal(t, "mycollection-1", configs.Config[0].GetStaticCollectionConfig().Name)
+	require.Equal(t, 1, len(pvtReadWriteSetWithConfigInfo.PvtRwset.NsPvtRwset))
 
 }

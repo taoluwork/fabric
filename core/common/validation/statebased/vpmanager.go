@@ -14,12 +14,15 @@ import (
 // Validation Parameters for a key could not be
 // supplied because they are being updated
 type ValidationParameterUpdatedError struct {
+	CC     string
+	Coll   string
 	Key    string
 	Height uint64
+	Txnum  uint64
 }
 
 func (f *ValidationParameterUpdatedError) Error() string {
-	return fmt.Sprintf("validation parameters for key %s have been changed in a transaction in block %d", f.Key, f.Height)
+	return fmt.Sprintf("validation parameters for key [%s] in namespace [%s:%s] have been changed in transaction %d of block %d", f.Key, f.CC, f.Coll, f.Txnum, f.Height)
 }
 
 // KeyLevelValidationParameterManager is used by validation plugins in order
@@ -36,7 +39,7 @@ type KeyLevelValidationParameterManager interface {
 	// height h. The function returns the validation parameter and no error in case of
 	// success, or nil and an error otherwise. One particular error that may be
 	// returned is ValidationParameterUpdatedErr, which is returned in case the
-	// validation parmeters for the given KVS key have been changed by a transaction
+	// validation parameters for the given KVS key have been changed by a transaction
 	// with txNum smaller than the one supplied by the caller. This protects from a
 	// scenario where a transaction changing validation parameters is marked as valid
 	// by VSCC and is later invalidated by the committer for other reasons (e.g. MVCC

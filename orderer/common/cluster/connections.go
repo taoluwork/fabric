@@ -7,11 +7,11 @@ SPDX-License-Identifier: Apache-2.0
 package cluster
 
 import (
-	"bytes"
 	"crypto/x509"
 	"sync"
-	"sync/atomic"
 
+	"github.com/hyperledger/fabric/common/crypto"
+	"github.com/hyperledger/fabric/common/metrics"
 	"github.com/pkg/errors"
 	"google.golang.org/grpc"
 )
@@ -26,28 +26,29 @@ type SecureDialer interface {
 	Dial(address string, verifyFunc RemoteVerifier) (*grpc.ClientConn, error)
 }
 
-//go:generate mockery -dir . -name ConnectionMapper -case underscore -output ./mocks/
-
 // ConnectionMapper maps certificates to connections
 type ConnectionMapper interface {
 	Lookup(cert []byte) (*grpc.ClientConn, bool)
 	Put(cert []byte, conn *grpc.ClientConn)
 	Remove(cert []byte)
+	Size() int
 }
 
 // ConnectionStore stores connections to remote nodes
 type ConnectionStore struct {
-	certsByEndpoints atomic.Value
-	lock             sync.RWMutex
-	Connections      ConnectionMapper
-	dialer           SecureDialer
+	lock        sync.RWMutex
+	Connections ConnectionMapper
+	dialer      SecureDialer
 }
 
 // NewConnectionStore creates a new ConnectionStore with the given SecureDialer
-func NewConnectionStore(dialer SecureDialer) *ConnectionStore {
+func NewConnectionStore(dialer SecureDialer, tlsConnectionCount metrics.Gauge) *ConnectionStore {
 	connMapping := &ConnectionStore{
-		Connections: make(ConnByCertMap),
-		dialer:      dialer,
+		Connections: &connMapperReporter{
+			ConnectionMapper:          make(ConnByCertMap),
+			tlsConnectionCountMetrics: tlsConnectionCount,
+		},
+		dialer: dialer,
 	}
 	return connMapping
 }
@@ -56,10 +57,12 @@ func NewConnectionStore(dialer SecureDialer) *ConnectionStore {
 // itself with the given TLS certificate
 func (c *ConnectionStore) verifyHandshake(endpoint string, certificate []byte) RemoteVerifier {
 	return func(rawCerts [][]byte, verifiedChains [][]*x509.Certificate) error {
-		if bytes.Equal(certificate, rawCerts[0]) {
+		err := crypto.CertificatesWithSamePublicKey(certificate, rawCerts[0])
+		if err == nil {
 			return nil
 		}
-		return errors.Errorf("certificate presented by %s doesn't match any authorized certificate", endpoint)
+		return errors.Errorf("public key of server certificate presented by %s doesn't match the expected public key",
+			endpoint)
 	}
 }
 
@@ -111,4 +114,23 @@ func (c *ConnectionStore) connect(endpoint string, expectedServerCert []byte) (*
 
 	c.Connections.Put(expectedServerCert, conn)
 	return conn, nil
+}
+
+type connMapperReporter struct {
+	tlsConnectionCountMetrics metrics.Gauge
+	ConnectionMapper
+}
+
+func (cmg *connMapperReporter) Put(cert []byte, conn *grpc.ClientConn) {
+	cmg.ConnectionMapper.Put(cert, conn)
+	cmg.reportSize()
+}
+
+func (cmg *connMapperReporter) Remove(cert []byte) {
+	cmg.ConnectionMapper.Remove(cert)
+	cmg.reportSize()
+}
+
+func (cmg *connMapperReporter) reportSize() {
+	cmg.tlsConnectionCountMetrics.Set(float64(cmg.ConnectionMapper.Size()))
 }

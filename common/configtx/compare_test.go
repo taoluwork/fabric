@@ -9,14 +9,13 @@ package configtx
 import (
 	"testing"
 
-	"github.com/stretchr/testify/assert"
-
-	cb "github.com/hyperledger/fabric/protos/common"
+	cb "github.com/hyperledger/fabric-protos-go/common"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCompareConfigValue(t *testing.T) {
 	// Normal equality
-	assert.True(t, comparable{
+	require.True(t, comparable{
 		ConfigValue: &cb.ConfigValue{
 			Version:   0,
 			ModPolicy: "foo",
@@ -29,7 +28,7 @@ func TestCompareConfigValue(t *testing.T) {
 		}}), "Should have found identical config values to be identical")
 
 	// Different Mod Policy
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigValue: &cb.ConfigValue{
 			Version:   0,
 			ModPolicy: "foo",
@@ -42,7 +41,7 @@ func TestCompareConfigValue(t *testing.T) {
 		}}), "Should have detected different mod policy")
 
 	// Different Value
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigValue: &cb.ConfigValue{
 			Version:   0,
 			ModPolicy: "foo",
@@ -55,7 +54,7 @@ func TestCompareConfigValue(t *testing.T) {
 		}}), "Should have detected different value")
 
 	// Different Version
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigValue: &cb.ConfigValue{
 			Version:   0,
 			ModPolicy: "foo",
@@ -68,7 +67,7 @@ func TestCompareConfigValue(t *testing.T) {
 		}}), "Should have detected different version")
 
 	// One nil value
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigValue: &cb.ConfigValue{
 			Version:   0,
 			ModPolicy: "foo",
@@ -79,7 +78,7 @@ func TestCompareConfigValue(t *testing.T) {
 
 func TestCompareConfigPolicy(t *testing.T) {
 	// Normal equality
-	assert.True(t, comparable{
+	require.True(t, comparable{
 		ConfigPolicy: &cb.ConfigPolicy{
 			Version:   0,
 			ModPolicy: "foo",
@@ -98,7 +97,7 @@ func TestCompareConfigPolicy(t *testing.T) {
 		}}), "Should have found identical config policies to be identical")
 
 	// Different mod policy
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigPolicy: &cb.ConfigPolicy{
 			Version:   0,
 			ModPolicy: "foo",
@@ -117,7 +116,7 @@ func TestCompareConfigPolicy(t *testing.T) {
 		}}), "Should have detected different mod policy")
 
 	// Different version
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigPolicy: &cb.ConfigPolicy{
 			Version:   0,
 			ModPolicy: "foo",
@@ -136,7 +135,7 @@ func TestCompareConfigPolicy(t *testing.T) {
 		}}), "Should have detected different version")
 
 	// Different policy type
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigPolicy: &cb.ConfigPolicy{
 			Version:   0,
 			ModPolicy: "foo",
@@ -155,7 +154,7 @@ func TestCompareConfigPolicy(t *testing.T) {
 		}}), "Should have detected different policy type")
 
 	// Different policy value
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigPolicy: &cb.ConfigPolicy{
 			Version:   0,
 			ModPolicy: "foo",
@@ -174,7 +173,7 @@ func TestCompareConfigPolicy(t *testing.T) {
 		}}), "Should have detected different policy value")
 
 	// One nil value
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigPolicy: &cb.ConfigPolicy{
 			Version:   0,
 			ModPolicy: "foo",
@@ -185,7 +184,7 @@ func TestCompareConfigPolicy(t *testing.T) {
 		}}.equals(comparable{}), "Should have detected one nil value")
 
 	// One nil policy
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigPolicy: &cb.ConfigPolicy{
 			Version:   0,
 			ModPolicy: "foo",
@@ -205,7 +204,7 @@ func TestCompareConfigPolicy(t *testing.T) {
 
 func TestCompareConfigGroup(t *testing.T) {
 	// Normal equality
-	assert.True(t, comparable{
+	require.True(t, comparable{
 		ConfigGroup: &cb.ConfigGroup{
 			Version:   0,
 			ModPolicy: "foo",
@@ -222,7 +221,7 @@ func TestCompareConfigGroup(t *testing.T) {
 		}}), "Should have found identical config groups to be identical")
 
 	// Different mod policy
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigGroup: &cb.ConfigGroup{
 			Version:   0,
 			ModPolicy: "foo",
@@ -233,7 +232,7 @@ func TestCompareConfigGroup(t *testing.T) {
 		}}), "Should have detected different mod policy")
 
 	// Different version
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigGroup: &cb.ConfigGroup{
 			Version:   0,
 			ModPolicy: "foo",
@@ -244,7 +243,7 @@ func TestCompareConfigGroup(t *testing.T) {
 		}}), "Should have detected different version")
 
 	// Different groups
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigGroup: &cb.ConfigGroup{
 			Version:   0,
 			ModPolicy: "foo",
@@ -261,7 +260,7 @@ func TestCompareConfigGroup(t *testing.T) {
 		}}), "Should have detected different groups entries")
 
 	// Different values
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigGroup: &cb.ConfigGroup{
 			Version:   0,
 			ModPolicy: "foo",
@@ -278,7 +277,7 @@ func TestCompareConfigGroup(t *testing.T) {
 		}}), "Should have detected fifferent values entries")
 
 	// Different policies
-	assert.False(t, comparable{
+	require.False(t, comparable{
 		ConfigGroup: &cb.ConfigGroup{
 			Version:   0,
 			ModPolicy: "foo",
